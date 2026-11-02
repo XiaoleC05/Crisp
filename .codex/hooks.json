@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "D:\\05_Code\\Crisp\\bin\\crisp.exe",
+            "timeout": 30,
+            "statusMessage": "Checking response quality"
+          }
+        ]
+      }
+    ]
+  }
+}
