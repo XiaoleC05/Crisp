@@ -14,7 +14,7 @@ Crisp 是一个独立的 Go 输出质量检查器。它在 Agent 完成回答、
 
 - 二进制：`crisp`
 - Go 模块：`github.com/XiaoleC05/Crisp`
-- 已验证宿主：Codex CLI 0.145.0-alpha.18、Claude Code 2.1.312、本机安装的 DeepSeek Harness、opencode 1.18.18（证据见 docs/ 下各接入文档）。
+- 已验证宿主：Codex CLI 0.145.0-alpha.18、Claude Code 2.1.312、DeepSeek Harness 0.2.1-rc.5、opencode 1.18.18（证据见 docs/ 下各接入文档）。
 
 ## 2. 要解决的问题
 
@@ -53,20 +53,20 @@ crisp hook （cmd/crisp/main.go）
 
 ## 5. 模块与文件职责
 
-| 路径 | 职责 | 负责人 |
-| --- | --- | --- |
-| `cmd/crisp/` | 进程入口：Stop Hook、check-text、check-file；env 配置、超时、fail-open | Lead |
-| `internal/hook/` | Stop Hook 协议解析与输出（Codex + Claude Code 共享子集）、transcript 最近用户消息提取（限读） | Lead / claude-adapter |
-| `internal/checker/` | 确定性检查：重复段落/句子、无效开场白/结束语、结构异常、字数信号 | checker-dev |
-| `internal/critic/` | OpenAI-compatible 客户端、prompt、响应 schema 校验 | critic-dev |
-| `internal/policy/decision.go` | 是否需要 Critic、最终决策、重写指令 | Lead |
-| `internal/logger/logger.go` | stderr 结构化 JSON 日志、敏感字段过滤 | Lead |
-| `integrations/dsh-plugin-crisp/` | DeepSeek Harness Cordis Host 插件 bundle（llm/stream，observe/guard） | dsh-plugin-dev |
-| `integrations/opencode-crisp/` | opencode 插件（事件钩子、一次重写 guard） | opencode-dev |
-| `testdata/cases/` | 30 条回归样本（positive 20 / negative 10），另有 go test 评测 | samples-dev |
-| `test/e2e/`、`scripts/`、`.codex/`、`.claude/` | Codex / Claude 真实 CLI E2E、超时验证、Hook 安装脚本 | codex-e2e / claude-adapter |
+| 路径 | 职责 |
+| --- | --- |
+| `cmd/crisp/` | 进程入口：Stop Hook、check-text、check-file；env 配置、超时、fail-open |
+| `internal/hook/` | Stop Hook 协议解析与输出（Codex + Claude Code 共享子集）、transcript 最近用户消息提取（限读） |
+| `internal/checker/` | 确定性检查：重复段落/句子、无效开场白/结束语、结构异常、字数信号 |
+| `internal/critic/` | OpenAI-compatible 客户端、prompt、响应 schema 校验 |
+| `internal/policy/decision.go` | 是否需要 Critic、最终决策、重写指令 |
+| `internal/logger/logger.go` | stderr 结构化 JSON 日志、敏感字段过滤 |
+| `integrations/dsh-plugin-crisp/` | DeepSeek Harness Cordis Host 插件 bundle（llm/stream，observe/guard） |
+| `integrations/opencode-crisp/` | opencode 插件（事件钩子、一次重写 guard） |
+| `testdata/cases/` | 30 条回归样本（positive 20 / negative 10），另有 go test 评测 |
+| `test/e2e/`、`scripts/`、`.codex/`、`.claude/` | Codex / Claude 真实 CLI E2E、超时验证、Hook 安装脚本 |
 
-约束：只使用 Go 标准库，不新增第三方依赖；不修改他人负责目录；只有 Lead 执行 git 操作。
+约束：核心 Go 模块只使用标准库，不新增第三方依赖；插件层不引入 npm 依赖。
 
 ## 6. Stop Hook 协议（Codex CLI / Claude Code）
 
@@ -328,14 +328,14 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 临时把 hooks.json 的 `timeout` 改为 2，Hook 命令改为一个 sleep 5 的命令，记录实际行为，然后恢复
 30 秒，并记录 `codex --version`。实测（Codex CLI 0.145.0-alpha.18 / Windows）：超时后 Codex 把 Hook
 标记为 Stop Failed 并丢弃其输出（CLI 层 fail-open），但**不会终止 Hook 进程**；详见
-[docs/codex-e2e.md](codex-e2e.md)。
+[docs/integrations/codex-cli.md](integrations/codex-cli.md)。
 
 ## 13. 后续扩展路线
 
 1. Phase 1（已完成）：Codex Stop Hook + Go Checker + Critic + 一次重写限制 + 回归测试。
 2. Phase 2（已完成）：`crisp check-file` 文档检查（Stop Hook 不自动检查磁盘文件）。
 3. Phase 3（已完成）：DeepSeek Harness Cordis 插件。规则可在 llm/stream 上流式观察；语义检查在流
-   结束后对完整回答执行；默认 observe，guard 模式后置一次重写。见 docs/dsh-integration.md。
+   结束后对完整回答执行；默认 observe，guard 模式后置一次重写。见 docs/integrations/deepseek-harness.md。
 4. Phase 4（已完成）：终端 Agent 接入层：Claude Code Stop Hook（与 Codex 共享协议）、opencode 插件、
    通用 Hook 协议文档。对完全不支持扩展的 Agent 的本地 API Proxy 仍属于后续工作。
 
@@ -352,9 +352,9 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 
 | Agent | 接入点 | 重写触发方式 | 已验证范围 |
 | --- | --- | --- | --- |
-| Codex CLI | Stop Hook | block JSON → CLI 完整重写；`stop_hook_active` 阻止循环 | 真实 CLI E2E 8/8（docs/codex-e2e.md） |
+| Codex CLI | Stop Hook | block JSON → CLI 完整重写；`stop_hook_active` 阻止循环 | 真实 CLI E2E 8/8（docs/integrations/codex-cli.md） |
 | Claude Code | Stop Hook | 同上 | 真实 CLI E2E 3/3（docs/integrations/claude-code.md） |
-| DeepSeek Harness | Cordis Host 插件 llm/stream | guard 模式在一次 block 后调用 agent.followup 追加改写请求；内存 guard 每 Turn 一次 | 单测 57 + 真实 dsh headless guard E2E（docs/dsh-integration.md） |
+| DeepSeek Harness | Cordis Host 插件 llm/stream | guard 模式在一次 block 后调用 agent.followup 追加改写请求；内存 guard 每 Turn 一次 | 单测 57 + 真实 dsh headless guard E2E（docs/integrations/deepseek-harness.md） |
 | opencode | 插件事件钩子 | block 后 session.promptAsync 一次重写；内存 guard 每消息一次 | 单测 51 + 真实 opencode serve E2E（docs/integrations/opencode.md） |
 | 其他 Hook Agent | 通用 stdin/stdout 协议 | 由宿主是否阻塞决定交付前/后置 | 协议文档（docs/integrations/generic-hook-protocol.md） |
 

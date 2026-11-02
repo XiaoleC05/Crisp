@@ -2,19 +2,22 @@
 
 Status: **installable Host-only bundle, verified against the installed DeepSeek
 Harness 0.2.1-rc.5 (Windows, Node.js v22.19.0) in an isolated scratch profile.**
-The bundle lives at [integrations/dsh-plugin-crisp/](../integrations/dsh-plugin-crisp/)
+The bundle lives at [integrations/dsh-plugin-crisp/](../../integrations/dsh-plugin-crisp/)
 and is registered by its own `cordis.patch.yml`.
 
 This page records exactly what was executed end to end, what was verified only
-by unit tests, and what remains unverified. Nothing here was measured against a
-real model provider or a real Critic service: the end-to-end run used a local
-Messages-compatible mock (`.tmp/dsh-e2e/mock-messages.mjs`, scratch only).
+by unit tests, and what remains unverified. The guard flow is reproducible from
+the repository: [scripts/e2e-dsh.ps1](../../scripts/e2e-dsh.ps1) runs the real
+`dsh` launcher headless against committed local protocol mocks
+([test/e2e/mockmessages](../../test/e2e/mockmessages/main.go) and
+[test/e2e/mockcritic](../../test/e2e/mockcritic/main.go)). Nothing here was
+measured against a real model provider or a real Critic service.
 
 ---
 
 ## 1. What the gate does
 
-Crisp (see [README.md](../README.md)) checks a finished assistant answer with a
+Crisp (see [README.md](../../README.md)) checks a finished assistant answer with a
 Go binary: deterministic rules first, an OpenAI-compatible LLM Critic second,
 then a PASS / BLOCK / FAIL-OPEN decision. This integration mounts that binary as
 a DeepSeek Harness Host plugin.
@@ -24,7 +27,7 @@ a DeepSeek Harness Host plugin.
   decision line, and never influence the conversation.
 - **guard** (opt-in): on a material BLOCK decision, queue exactly one
   user-role followup asking for the fixed full rewrite from
-  [internal/policy/decision.go](../internal/policy/decision.go). The rewrite is
+  [internal/policy/decision.go](../../internal/policy/decision.go). The rewrite is
   a new turn; a rewrite turn is never gated again, so a bad rewrite cannot
   loop.
 
@@ -110,7 +113,13 @@ Why this shape:
 | `integrations/dsh-plugin-crisp/lib/config.js` | defensive config, child-env allowlist, default binary resolution |
 | `integrations/dsh-plugin-crisp/lib/log.js` | one JSON line per event to `logFile` or stderr |
 | `integrations/dsh-plugin-crisp/locale/{en,zh}.json`, `icon.svg` | Plugin Manager display metadata and original icon |
-| `integrations/dsh-plugin-crisp/test/` | 56 hermetic `node:test` tests (fake ctx, fake runner, fake child) |
+| `integrations/dsh-plugin-crisp/test/` | 57 hermetic `node:test` tests (fake ctx, fake runner, fake child) |
+
+The end-to-end reproduction harness is committed too:
+`scripts/e2e-dsh.ps1` (PowerShell 7) drives the real launcher and asserts the
+guard flow, with a stdlib-only Messages-API SSE mock at
+`test/e2e/mockmessages/main.go` and the shared OpenAI-compatible Critic mock at
+`test/e2e/mockcritic/main.go`.
 
 ---
 
@@ -155,7 +164,7 @@ The shipped Cordis plugin-development docs specify this path: author the bundle
 in the workspace, then call `plugin_manager` with
 `action: "install_bundle"` and the **absolute package directory** as `target`
 (it runs pnpm, saves the profile dependency, and enables the bundle). This path
-was **not executed here**: the delegated agent environment for this task had no
+was **not executed here**: the verification environment had no
 `plugin_manager` tool and was not allowed to change the user's real profile.
 It is documented from the package READMEs rather than from a run.
 
@@ -289,97 +298,129 @@ variables are forwarded.
 
 ## 6. Verification (executed)
 
-Environment: Windows, Go 1.26.4 `bin/crisp.exe`, DSH `0.2.1-rc.5`, Node.js
-v22.19.0. All DSH state lived under `D:\05_Code\Crisp\.tmp\dsh-home`
-(`DSH_HOME` override); the user's `C:\Users\71408\.dsh` profile was never
-opened or modified.
+### 6.1 Committed guard E2E harness — PASS
 
-### 6.1 Unit tests — PASS
+The original manual guard run has been promoted into the repository:
+
+- [scripts/e2e-dsh.ps1](../../scripts/e2e-dsh.ps1) — PowerShell 7 E2E harness.
+- [test/e2e/mockmessages/main.go](../../test/e2e/mockmessages/main.go) —
+  stdlib-only Anthropic/DeepSeek Messages-API mock with SSE streaming.
+- [test/e2e/mockcritic/main.go](../../test/e2e/mockcritic/main.go) — the
+  existing OpenAI-compatible Critic mock.
+
+One-line reproduction (from the repository root):
 
 ```powershell
-cd D:\05_Code\Crisp\integrations\dsh-plugin-crisp
+pwsh -File scripts/e2e-dsh.ps1
+```
+
+What it does:
+
+1. Finds the installed `dsh` launcher (explicit `-DshPath`, then `PATH`, then
+   the default DeepSeek Harness install locations). If none is found it prints
+   `SKIPPED` with every searched path, writes `summary.json`, and exits 0.
+2. Builds `bin/crisp.exe` plus the two mocks, then creates an isolated
+   `DSH_HOME` and a scratch profile from the shipped `headless` template under
+   `.tmp/e2e/dsh/run-<stamp>/` (the real user `~/.dsh` is never opened; the
+   script asserts no scratch profile appears there).
+3. Registers the bundle with
+   `dsh plugin --profile <scratch> add <repo>/integrations/dsh-plugin-crisp`.
+4. Starts the Messages mock (flawed answer first, improved answer for the
+   rewrite request) and the Critic mock (block for the flawed answer), writes a
+   guard-mode `--patch` overlay, and runs the real `dsh` headless agent with
+   `DEEPSEEK_BASE_URL` and `QUALITY_GATE_*` pointed at the local mocks.
+5. Asserts the complete guard flow as 11 named checks: scratch profile created;
+   bundle registered in the profile manifest; headless run exit 0; exactly two
+   turns and final stdout equals the improved answer; first check blocked with
+   rule signals and a Critic call; rewrite turn checked and passed; exactly one
+   user-role followup carrying the fixed rewrite instruction; auxiliary model
+   calls neutralized (no answer-sequence shift); the Critic saw exactly one
+   request and returned `block`; no contained gate errors or fail-open
+   records; scratch-`DSH_HOME`-only isolation.
+6. Writes `summary.json` (dsh/go versions, plugin path, per-check results,
+   artifact paths) and keeps gate/mock/stdout logs; processes and environment
+   variables are cleaned up in `finally`.
+
+Options: `-DshPath <dsh.cmd>` pins the launcher (it still SKIPs when the path
+is missing), `-SkipBuild` reuses the binaries built in
+`.tmp/e2e/dsh/bin`, `-ScenarioTimeoutSec <n>` bounds one headless invocation
+(default 240), `-WorkRoot <dir>` moves the scratch root.
+
+Exit codes: **0** = all checks passed or SKIPPED, **1** = one or more checks
+failed. Artifacts: `.tmp/e2e/dsh/run-<stamp>/summary.json` plus
+`logs/gate.jsonl`, `logs/mockmessages.jsonl`, `logs/mockcritic.jsonl`,
+`logs/dsh-headless.out` and `logs/dsh-headless.err`.
+
+Measured on Windows with Go 1.26.4 and dsh 0.2.1-rc.5 (2026-11-02):
+**ALL 11 CHECKS PASSED** (`elapsedMs: 2839`), reproduced twice — once with a
+full build and once with `-SkipBuild` — and the missing-`-DshPath` run exits 0
+with `SKIPPED`.
+
+### 6.2 Unit tests — PASS
+
+```powershell
+cd integrations/dsh-plugin-crisp
 node --test "test/*.test.js"
 ```
 
-Result: **56/56 pass, 0 fail** (`.tmp/dsh-e2e/test-run.txt`). Coverage: config
-defaults/precedence/clamping; child-env filtering; decision parsing; spawn
-success/error/exit/kill; all fail-open paths; stream pass-through identity;
-visible-text accumulation (reasoning excluded, block-end fallback); tool-call
-and non-stop skips; minRunes; agent-request detection; guard followup once per
-turn, rewrite-turn suppression, no-turn/agent-unavailable/refusing-followup
-paths; manifest/patch/locale/icon contract; rewrite instruction equality with
+Result: **57/57 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
+child-env filtering; decision parsing; spawn success/error/exit/kill; all
+fail-open paths; stream pass-through identity; visible-text accumulation
+(reasoning excluded, block-end fallback); tool-call and non-stop skips;
+minRunes; agent-request detection; guard followup once per turn, rewrite-turn
+suppression, no-turn/agent-unavailable/refusing-followup paths;
+manifest/patch/locale/icon contract; rewrite instruction equality with
 `internal/policy/decision.go`.
 
-### 6.2 Real harness activation — PASS
+### 6.3 Additional one-off measurements during integration development
 
-```powershell
-$env:DSH_HOME = 'D:\05_Code\Crisp\.tmp\dsh-home'
-& $dsh --profile crisp-scratch --patch .tmp/dsh-e2e/overlay.yml --help
-```
+These were measured manually on the same Windows machine before the committed
+harness existed; the automated harness above now covers the successful guard
+path (including the activation record), while the failure paths below are still
+one-off measurements:
 
-The headless app printed its help and exited 0; the scratch log file received
-`crisp_quality_gate_active` with `binary_exists: true` — the installed bundle
-layer loaded, the module imported, and `apply()` ran inside the real Loader.
-Evidence: `.tmp/dsh-e2e/boot-help.txt`, `.tmp/dsh-e2e/quality-gate.jsonl`.
+- **Mount/activation inside the real Loader.** A scratch `--help` boot of the
+  headless profile mounted the bundle and wrote
+  `{"event":"crisp_quality_gate_active","mode":"observe",...,"binary_exists":true}`.
+- **`llm/stream` interception on a failing provider.** A headless run pointed at
+  a closed local port (`http://127.0.0.1:9`, no network) reached the real
+  adapter dispatch path; the gate observed the terminal `finish:error` chunk and
+  logged `crisp_quality_skip ... "skip_reason":"finish_error"` with the correct
+  session id and turn 1.
 
-### 6.3 Real `llm/stream` interception on a failing provider — PASS
+### 6.4 Guard flow measured numbers
 
-```powershell
-$env:DEEPSEEK_API_KEY = 'test-key-not-a-secret'
-$env:DEEPSEEK_BASE_URL = 'http://127.0.0.1:9'   # closed port: no network
-& $dsh --profile crisp-scratch --patch .tmp/dsh-e2e/overlay.yml --json 'Reply with exactly: hello'
-```
+The committed harness reproduces the flow below; these are the numbers from the
+original manual run that motivated it and from the harness run:
 
-The real agent loop reached the adapter, the transport failed, and the gate
-observed the terminal `finish:error` chunk with the correct durable session id
-and turn (`skip_reason: finish_error`). This exercises the waterfall
-interception, accumulator, and log path inside the real Harness. Evidence:
-`.tmp/dsh-e2e/run1.out`, `.tmp/dsh-e2e/run1.err`,
-`.tmp/dsh-e2e/quality-gate.jsonl`.
-
-### 6.4 Real guard-mode rewrite E2E (local provider + critic mocks) — PASS
-
-A scratch-only Node mock served both the DeepSeek Messages SSE endpoint and the
-OpenAI-compatible Critic endpoint (`.tmp/dsh-e2e/mock-messages.mjs`): first
-answer defective, Critic returns `block/material`, second model request (the
-rewrite turn) returns a clean answer.
-
-```powershell
-$env:DEEPSEEK_API_KEY='test-key-not-a-secret'
-$env:DEEPSEEK_BASE_URL='http://127.0.0.1:18771'
-$env:QUALITY_GATE_BASE_URL='http://127.0.0.1:18771/v1'
-$env:QUALITY_GATE_MODEL='mock-critic'
-& $dsh --profile crisp-scratch --patch .tmp/dsh-e2e/guard-overlay.yml --json '请说明部署使用了多少副本。'
-```
-
-Observed:
-
-1. Turn 1 answer delivered (defective). Gate line: `decision:"block"`,
+1. Turn 1 delivers the flawed answer. Gate record: `decision:"block"`,
    `rule_types:["duplicate_sentence","filler_opening"]`, `critic_called:true`,
    `fail_open:false`, real `crisp.exe` exit 0.
-2. `crisp_guard_followup` for turn 1 (one followup).
-3. Turn 2 started; the mock saw a third `/v1/messages` request whose body
-   contains the fixed rewrite instruction (`"rewrite":true`).
-4. Turn 2 answer checked: `decision:"pass"`; no second followup.
-5. Headless final stdout is the **rewritten** answer; exit 0.
-6. Durable session log (zstd frames; decoded with
-   `.tmp/dsh-e2e/read-session.mjs`) contains 2 `turn/start` + 2 `turn/end`,
-   2 `assistant/message`, and exactly one `user/message` carrying the rewrite
-   instruction with source kind `crisp-quality-gate`.
-
-Evidence: `.tmp/dsh-e2e/guard-run.out`, `.tmp/dsh-e2e/guard-run.err`,
-`.tmp/dsh-e2e/guard-gate.jsonl`, `.tmp/dsh-e2e/mock.log`.
+2. Exactly one `crisp_guard_followup` is queued for turn 1 (68 characters of
+   rewrite instruction).
+3. Turn 2 starts; the Messages mock receives a second conversation model call
+   whose body carries the fixed rewrite instruction and the assistant history
+   (2 main model calls, 1 Critic call total; the auxiliary session-title call is
+   answered neutrally and does not shift the answer sequence).
+4. Turn 2 is checked: `decision:"pass"`, `fail_open:false`.
+5. Headless final stdout is the improved (rewritten) answer; exit 0.
+6. The durable session log contains 2 `turn/start` + 2 `turn/end`, 2
+   `assistant/message`, and exactly one `user/message` carrying the rewrite
+   instruction with source kind `crisp-quality-gate` (measured by decoding the
+   zstd session log during the original manual run; the committed harness
+   asserts the same facts through the gate and mock logs rather than decoding
+   the session container).
 
 ### 6.5 What remains unverified
 
 | Claim | Status |
 |---|---|
-| `plugin_manager install_bundle` path | **Not executed** (tool unavailable in this delegated environment; user profile untouched). Documented from shipped docs. |
-| Full rewrite on the user's real profile / long-lived Web/TUI surface | **Not executed.** Guard followup was verified through the headless runner; the session-event and followup APIs used are the same, but no GUI session was driven. |
+| `plugin_manager install_bundle` path | **Not executed** (tool unavailable in the verification environment; user profile untouched). Documented from shipped docs. |
+| Full rewrite on the user's real profile / long-lived Web/TUI surface | **Not executed.** Guard followup was verified through the headless runner by the committed harness; the session-event and followup APIs used are the same, but no GUI session was driven. |
 | Rendering of the plugin's title/description/icon in Plugin Manager | **Not executed** (no browser control / no plugin-manager tool). Locale JSON, exports, and SVG validity are covered by contract tests only. |
 | Real DeepSeek provider and real Critic service | **Not used.** The E2E used local protocol mocks; no credentials or network calls were involved. |
-| `@deepseek-ai/dsh-llm-replay` headless replay | **Blocked:** the package is not shipped in this installation's `app.asar` (checked by listing; only the source-checkout catalog mentions it). The local Messages mock was used instead. |
-| Non-Windows platforms, paths with spaces, other DSH versions | **Not verified.** |
+| `@deepseek-ai/dsh-llm-replay` headless replay | **Blocked:** the package is not shipped in this installation's `app.asar` (checked by listing; only the source-checkout catalog mentions it). The committed Messages mock is used instead. |
+| Other DSH versions, non-Windows platforms, paths with spaces | **Not verified.** The harness derives the plugin path from the repository and needs an installed `dsh`; it was measured only against 0.2.1-rc.5 on Windows. |
 | Which detector branch ran in the E2E (lazy marker import vs `purpose`/`sessionId` fallback) | **Not observed.** Both produce the same decision; titles/compaction are filtered by `purpose` regardless. |
 
 ---
@@ -426,22 +467,27 @@ Evidence: `.tmp/dsh-e2e/guard-run.out`, `.tmp/dsh-e2e/guard-run.err`,
 ## 8. Quick checks
 
 ```powershell
+# full guard E2E against the real dsh launcher (local mocks, no network)
+pwsh -File scripts/e2e-dsh.ps1
+
 # unit tests (no binary, no network)
 cd D:\05_Code\Crisp\integrations\dsh-plugin-crisp; node --test "test/*.test.js"
 
 # binary contract used by the plugin
 'This is a normal complete answer.' | D:\05_Code\Crisp\bin\crisp.exe check-text
 
-# scratch profile composition row
-$env:DSH_HOME = 'D:\05_Code\Crisp\.tmp\dsh-home'
-& $dsh --profile crisp-scratch --dump-config | Select-String 'crisp-quality-gate' -Context 0,12
+# inspect the most recent harness run (summary + gate/mock logs)
+$run = Get-ChildItem .tmp\e2e\dsh -Directory -Filter 'run-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content (Join-Path $run.FullName 'summary.json')
 ```
 
 ---
 
 ## 9. Pointers
 
-- Crisp binary build, env variables, decisions: [README.md](../README.md),
-  [docs/design.md](design.md).
-- Codex Stop-hook integration and its real E2E: [docs/codex-e2e.md](codex-e2e.md).
-- Rule-layer evaluation: [docs/eval-report.md](eval-report.md).
+- Crisp binary build, env variables, decisions: [README.md](../../README.md),
+  [docs/design.md](../design.md).
+- Codex Stop-hook integration and its real E2E: [docs/integrations/codex-cli.md](codex-cli.md).
+- Rule-layer evaluation: [docs/eval-report.md](../eval-report.md).
+- Guard E2E harness: [scripts/e2e-dsh.ps1](../../scripts/e2e-dsh.ps1); mock
+  Messages API: [test/e2e/mockmessages/main.go](../../test/e2e/mockmessages/main.go).

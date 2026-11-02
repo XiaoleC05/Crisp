@@ -1,4 +1,4 @@
-# Claude Code Stop hook integration (Phase 4a)
+# Claude Code Stop hook integration
 
 Status: **verified end-to-end against a real Claude Code 2.1.312 CLI Stop hook**,
 using an isolated config directory and a local mock Anthropic Messages API +
@@ -108,7 +108,7 @@ to mirror the real-world hooks config on this machine.)
 
 ## 2. Protocol mapping: Codex vs Claude Code
 
-| Aspect | Codex CLI (verified in `docs/codex-e2e.md`) | Claude Code 2.1.312 (verified here) |
+| Aspect | Codex CLI (verified in `docs/integrations/codex-cli.md`) | Claude Code 2.1.312 (verified here) |
 |--------|------------------------------------------|-------------------------------------|
 | Config file (project) | `<repo>/.codex/hooks.json` | `<repo>/.claude/settings.json` under `hooks` |
 | Config file (user) | `$CODEX_HOME/hooks.json` | `$CLAUDE_CONFIG_DIR/settings.json` (default `~/.claude/settings.json`) |
@@ -434,13 +434,13 @@ Run against scratch copies under `.tmp/` (never the real user config); all check
 3. **Project/local settings hook trust/review was not exercised.** The E2E used
    isolated *user* settings. Project-level `.claude/settings.json` hooks are
    documented to need workspace trust and/or hook review; that interactive flow
-   was not clicked through. docs/README wording should keep that caveat.
+   was not clicked through. The project README keeps this caveat.
 4. **Interactive TUI path not exercised.** Only `-p` (print) mode was run.
 5. **Hook timeout behavior in Claude Code not measured.** The E2E used a 60 s
    timeout and quick hooks. Crisp's own fail-open timeout path is verified
    (`c3`), but whether Claude Code kills a timed-out hook process or just
    discards its result was not measured (Codex's Windows behavior is documented
-   in `docs/codex-e2e.md` and does not kill).
+   in `docs/integrations/codex-cli.md` and does not kill).
 6. **`async: true` and `onFailure`/`once`/`args` handler variants were not
    exercised**; the shipped config deliberately stays a plain blocking command
    hook.

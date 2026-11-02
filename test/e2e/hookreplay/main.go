@@ -97,7 +97,7 @@ func main() {
 }
 
 // meta renders a realistic Stop hook payload with the exact field set Codex
-// 0.145.0-alpha.18 sends (captured in docs/codex-e2e.md).
+// 0.145.0-alpha.18 sends (captured in docs/integrations/codex-cli.md).
 func meta(answer string, stopHookActive *bool, omitStopHookActive bool) string {
 	obj := map[string]any{
 		"cwd":                    `D:\05_Code\Crisp`,

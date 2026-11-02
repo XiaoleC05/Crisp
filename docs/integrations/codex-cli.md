@@ -1,8 +1,6 @@
-# Codex CLI Stop hook — real end-to-end validation (task-5)
+# Codex CLI Stop hook integration (Phase 1)
 
-Status: **Stop hooks work end-to-end in the installed Codex CLI.** Crisp's hook
-contract (docs/design.md sections 6, 12.4, 12.5) is compatible with this build
-apart from one measured Windows timeout nuance explained in section 7.
+Status: **verified end-to-end against the real Codex CLI `codex-cli 0.145.0-alpha.18` (Windows x86_64)**: the Stop hook fires, a material block triggers exactly one full rewrite, and the second Stop passes. Crisp's hook contract (docs/design.md sections 6, 12.4, 12.5) is compatible with this build apart from one measured Windows timeout nuance (section 7).
 
 - Codex CLI: `codex-cli 0.145.0-alpha.18` (Windows x86_64)
 - Binary: `C:\Users\71408\AppData\Local\OpenAI\Codex\bin\5dee10576ec7a5b8\codex.exe`
@@ -14,9 +12,36 @@ Everything below is either (a) reproduced end-to-end against the real CLI, or
 (b) extracted from the binary's embedded protocol definitions. Inferred or
 unverified items are marked explicitly; nothing is claimed without evidence.
 
+## 目录 / Table of contents
+
+- [本页验证结论 / Verification summary](#1-本页验证结论--verification-summary)
+- [Unverified / caveats (honest gaps)](#2-unverified--caveats-honest-gaps)
+- [Hook discovery and configuration (verified)](#3-hook-discovery-and-configuration-verified)
+- [Exact Stop hook input schema](#4-exact-stop-hook-input-schema)
+- [Exact Stop hook output schema](#5-exact-stop-hook-output-schema)
+- [Loop guard: block → rewrite → second Stop (verified end-to-end)](#6-loop-guard-block--rewrite--second-stop-verified-end-to-end)
+- [Timeout field and measured timeout behavior](#7-timeout-field-and-measured-timeout-behavior)
+- [Reproducing the whole validation](#8-reproducing-the-whole-validation)
+- [Known limitations / risks](#9-known-limitations--risks)
+- [Exact version strings](#10-exact-version-strings)
+- [相关文档 / Related documents](#11-相关文档--related-documents)
+
 ---
 
-## 1. Verified summary
+## 1. 本页验证结论 / Verification summary
+
+### 速览 / At a glance
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Real Stop hook fires and the pass path works | PASS | `scripts/e2e-codex.ps1` S1 |
+| block → full rewrite → second Stop passes | PASS | S2: `stop_hook_active` false → true; 2 model requests / 1 critic request; final answer is the rewrite |
+| Hook trust and project trust gates | Behavior verified: untrusted hook / untrusted project do not run (automation bypasses both explicitly) | S3 / S6 |
+| `timeout` field and Windows timeout behavior | Measured: late output is discarded; hook process is not killed | S4a / S4b (section 7) |
+| Checked-in `.codex/hooks.json` invoked directly | PASS | S5 |
+| Offline protocol replay | 12/12 | `go run ./test/e2e/hookreplay -crisp bin/crisp.exe` |
+
+### 详细声明 / Detailed claims
 
 | # | Claim | Evidence |
 |---|-------|----------|
@@ -121,7 +146,7 @@ From the JSON schema embedded in the binary (title `stop.command.input`,
 Captured live first-Stop payload (from `.tmp/e2e/captures-pass.jsonl`):
 
 ```json
-{"hook_event_name":"Stop","cwd":"D:\05_Code\Crisp",
+{"hook_event_name":"Stop","cwd":"D:\\05_Code\\Crisp",
  "session_id":"01a19c71-918d-74a1-9008-8592c151ab21",
  "turn_id":"01a19c71-91fd-7303-88f0-b488a7f8b2e5",
  "model":"mock-model","permission_mode":"bypassPermissions",
@@ -233,9 +258,9 @@ $run = 'D:\05_Code\Crisp\.tmp\e2e\repro'
 # project_root_markers + [projects.'<scratch>'] trust_level="trusted"
 # project .codex/hooks.json: Stop -> command with "timeout": 2
 $env:CODEX_HOME = "$run\home"; $env:MOCK_API_KEY = 'mock-key'; $env:NO_COLOR = '1'
-& 'C:\Users\71408\AppData\Local\OpenAI\Codex\bin\5dee10576ec7a5b8\codex.exe' 
-  exec --skip-git-repo-check -C "$run\project" -s read-only 
-  --dangerously-bypass-hook-trust < prompt.txt
+$codex = 'C:\path\to\codex.exe'   # substitute your Codex CLI install
+& $codex exec --skip-git-repo-check -C "$run\project" -s read-only `
+    --dangerously-bypass-hook-trust < prompt.txt
 ```
 
 Prompt is passed on stdin to avoid Start-Process quoting issues. The hook's
@@ -246,13 +271,17 @@ start/end timestamps are recorded by `test/e2e/hooktap` in a JSONL capture file.
 ```powershell
 pwsh -File scripts/build.ps1                 # build bin/crisp.exe, prints go version
 pwsh -File scripts/install-codex-hook.ps1 -Force
-pwsh -File scripts/e2e-codex.ps1             # real codex.exe scenarios (see script help)
+pwsh -File scripts/e2e-codex.ps1             # real codex.exe scenarios (list below)
 go run ./test/e2e/hookreplay -crisp bin/crisp.exe   # deterministic 12-case replay
+go run ./test/docscheck                      # relative Markdown links must resolve
 ```
 
-See `scripts/e2e-codex.ps1 -Help` for scenario list (S0 replay, S1 pass,
-S2 block/rewrite/loop guard, S3 hook-trust gate, S4a/S4b timeout pair, S5
-checked-in config, S6 project-trust gate). The harness creates only `.tmp/`
+Scenario list: S0 replay (12 cases), S1 pass, S2 block/rewrite/loop guard,
+S3 hook-trust gate, S4a/S4b timeout pair, S5 checked-in config, S6 project-trust
+gate - the same list is in the script's comment-based help header. The script
+needs the Codex CLI (default path or `-CodexPath`) and fails fast when it is
+missing; `scripts/e2e-claude.ps1` is the one that prints `SKIPPED` and exits 0 when
+its CLI is absent. The harness creates only `.tmp/`
 scratch data; it never writes outside its run directory.
 
 ### Mock infrastructure (stdlib only, no new module dependencies)
@@ -268,7 +297,9 @@ scratch data; it never writes outside its run directory.
 - `test/e2e/hookreplay`: offline protocol replay of the section 12.4 table
   against the real binary (12 cases: pass, block, minor-block pass, loop guard,
   missing `stop_hook_active`, empty message, invalid JSON, critic unconfigured,
-  critic timeout/invalid JSON/HTTP 500, short answer). Latest run: **12/12 pass**.
+  critic timeout/invalid JSON/HTTP 500, short answer). Latest run (2026-11-02,
+  this machine): **12/12 pass in 611 ms** via
+  `go run ./test/e2e/hookreplay -crisp bin/crisp.exe`.
 - `scripts/build.ps1`: builds `bin/crisp.exe` and prints `go version`.
 - `scripts/install-codex-hook.ps1`: writes `.codex/hooks.json` with an
   absolute binary path, `type`, `timeout` and `statusMessage`.
@@ -302,3 +333,14 @@ codex-cli 0.145.0-alpha.18
 go version go1.26.4 windows/amd64
 Crisp: 0.1.0 (crisp version)
 ```
+
+---
+
+## 11. 相关文档 / Related documents
+
+- [Agent 接入总览](README.md) - how to choose an integration, shared prerequisites and verification commands
+- [Claude Code integration](claude-code.md) - the same Stop-hook contract, verified against another real CLI
+- [DeepSeek Harness plugin](deepseek-harness.md) / [opencode plugin](opencode.md) - host-plugin (post-delivery) integrations
+- [Generic Stop-hook protocol](generic-hook-protocol.md) - the minimal contract for other agents
+- [docs/design.md](../design.md) / [docs/architecture.md](../architecture.md) / [docs/troubleshooting.md](../troubleshooting.md)
+- [Rule-evaluation report](../eval-report.md) / [docs index](../README.md) / [root README](../../README.md)

@@ -2,7 +2,7 @@
 
 This is the minimal contract an agent runtime must satisfy to use Crisp as a
 quality gate at the end of a turn. Codex CLI and Claude Code already speak it
-(see `docs/codex-e2e.md` and `docs/integrations/claude-code.md`); any other
+(see `docs/integrations/codex-cli.md` and `docs/integrations/claude-code.md`); any other
 terminal agent can either match it directly or use a small adapter wrapper.
 
 Crisp is intentionally a **process + JSON on stdin/stdout** contract: no SDK, no
@@ -76,7 +76,7 @@ to 2000 runes before sending it to the critic.
 ### 2.4 Minimal and maximal examples
 
 ```json
-{"last_assistant_message":"用 context.WithTimeout 包住请求即可，超时后记得检查 ctx.Err()。"}
+{"last_assistant_message":"用 context.WithTimeout 包住请求即可，超时后记得检查 ctx.Err()。","stop_hook_active":false}
 ```
 
 ```json
@@ -198,7 +198,7 @@ per turn" itself instead.
 | Blocking pre-delivery command hook with stdin JSON + stdout JSON (Codex, Claude Code) | Point the hook at Crisp directly; optionally forward the host's native payload. |
 | Blocking hook but a different output schema | Adapter wrapper: build the minimal Crisp input (section 2), run Crisp, translate the block reason to the host's decision format. |
 | Blocking hook with a non-JSON stdin format | Adapter extracts the final answer, builds the minimal JSON, relays Crisp's stdout in the host's expected format. |
-| Only async / post-hoc hooks (observe after delivery) | Cannot prevent delivery. Either (a) use the verdict as an audit signal and schedule a corrective turn that explicitly asks for a rewrite (UX-visible, does not replace the already-delivered answer), or (b) run Crisp behind a local API proxy (design Phase 4 fallback) that holds the stream until the check completes. |
+| Only async / post-hoc hooks (observe after delivery) | Cannot prevent delivery. Either (a) use the verdict as an audit signal and schedule a corrective turn that explicitly asks for a rewrite (UX-visible, does not replace the already-delivered answer), or (b) run Crisp behind a local API proxy that holds the stream until the check completes (not implemented in v0.1.0; listed as future work). |
 | No extension points at all | Offline/CI use of `crisp check-text` only, or the proxy fallback. |
 | HTTP/prompt/agent-type hooks | Wrap Crisp in a command handler; do not implement the check in the host's prompt/LLM hook. |
 
@@ -246,7 +246,7 @@ JSON (write wrapper diagnostics to stderr).
 
 Run these before claiming an integration works:
 
-1. `echo '{"last_assistant_message":"<normal answer>"}' | crisp` -> `{}`.
+1. `echo '{"last_assistant_message":"<normal answer>","stop_hook_active":false}' | crisp` -> `{}`.
 2. Mock critic returns `block/material` -> stdout is
    `{"decision":"block","reason":"<non-empty>"}`.
 3. `stop_hook_active=true` -> `{}` and the critic is not called.
@@ -263,7 +263,7 @@ Run these before claiming an integration works:
 
 The repo's own evidence for steps 1-9:
 `go test ./internal/hook`, `go test ./cmd/crisp`, the Codex E2E in
-`docs/codex-e2e.md`, and the Claude Code protocol matrix + real-CLI E2E in
+`docs/integrations/codex-cli.md`, and the Claude Code protocol matrix + real-CLI E2E in
 `docs/integrations/claude-code.md`.
 
 ---
@@ -286,7 +286,7 @@ The repo's own evidence for steps 1-9:
 
 - Design spec: `docs/design.md` sections 6 (protocol), 9 (decision), 10 (env),
   12.4 (hook integration tests).
-- Codex real-cli validation: `docs/codex-e2e.md`.
+- Codex real-cli validation: `docs/integrations/codex-cli.md`.
 - Claude Code integration: `docs/integrations/claude-code.md`.
 - Config templates: `.codex/hooks.example.json`, `.claude/settings.example.json`.
 - Installers: `scripts/install-codex-hook.ps1`, `scripts/install-claude-hook.ps1`.

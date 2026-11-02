@@ -1,6 +1,6 @@
 # Crisp quality gate — a Host-only plugin bundle row.
 #
-# Install this bundle into a profile (see docs/dsh-integration.md) and the row
+# Install this bundle into a profile (see docs/integrations/deepseek-harness.md) and the row
 # below is inserted into that profile's effective composition. Change the
 # config here or override it from the profile's own cordis.patch.yml:
 #

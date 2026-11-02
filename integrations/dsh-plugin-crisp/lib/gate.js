@@ -1,7 +1,7 @@
 // The quality-gate core: llm/stream interception, answer accumulation, Crisp
 // invocation, structured logging, and the opt-in guard-mode rewrite request.
 //
-// Interception design (see docs/dsh-integration.md):
+// Interception design (see docs/integrations/deepseek-harness.md):
 //   * `llm/stream` is a Cordis waterfall. The handler must return the exact
 //     chunk stream downstream produced. We wrap it in an async generator that
 //     yields every chunk object unchanged (object identity preserved) so token

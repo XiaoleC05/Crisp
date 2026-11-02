@@ -9,7 +9,7 @@
 
     Codex only loads project hooks for a trusted project, and only runs hooks
     that have been reviewed/trusted (interactive TUI) or explicitly allowed for
-    automation with --dangerously-bypass-hook-trust. See docs/codex-e2e.md.
+    automation with --dangerously-bypass-hook-trust. See docs/integrations/codex-cli.md.
 .PARAMETER CrispBinary
     Absolute path to the Crisp binary. Defaults to <repo>/bin/crisp.exe.
 .PARAMETER TimeoutSeconds
@@ -77,7 +77,7 @@ Write-Host ('wrote ' + $HooksPath)
 Write-Host '--- hooks.json ---'
 Write-Host $json
 Write-Host ''
-Write-Host 'Next steps (details in docs/codex-e2e.md):'
+Write-Host 'Next steps (details in docs/integrations/codex-cli.md):'
 Write-Host '  1. Trust this project in Codex (TUI prompt, or [projects.<path>] trust_level = "trusted" in CODEX_HOME/config.toml).'
 Write-Host '  2. Review and trust the hook in the Codex TUI on first use.'
 Write-Host '  3. For automation-only runs, pass --dangerously-bypass-hook-trust to codex exec.'

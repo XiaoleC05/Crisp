@@ -47,7 +47,7 @@
 
 ## 5. 长度与内容约束
 
-- 问题样本 `answer` 长度 60–600 字符；`over_fragmentation` 允许略长，当前基线最长 329 字符。
+- 问题样本 `answer` 长度 60–600 字符；`over_fragmentation` 允许略长，当前基线最长 426 字符。
 - `good_long` 长度 600–1500 字符；当前基线 631–875 字符。`good_short` 为 1–3 句，不设固定字数。
 - “字符”按 Unicode rune 计（Go `utf8.RuneCountInString`）。样本以中文为主，可含英文技术名词与代码。
 - 正常样本必须 `expected=pass`、`expected_severity=none`、`expected_rule_signals=[]`。规则层允许对正常样本输出 `info`/`minor` 的结构或长度风险信号（例如表格、短文本），这些信号不参与拦截判定。

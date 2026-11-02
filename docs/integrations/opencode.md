@@ -1,4 +1,4 @@
-# opencode 接入：Crisp Quality Gate 插件（Phase 4b）
+# opencode 接入：Crisp Quality Gate 插件
 
 状态：**已在 opencode 1.18.18 上端到端验证**（隔离配置 + 本地 mock provider + 本地 mock critic）。
 插件实现与单元测试见 `integrations/opencode-crisp/`；本文件记录验证过的插件 API、安装方式、配置、
