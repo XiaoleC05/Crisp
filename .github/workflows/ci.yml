@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./... -count=1
+      - name: build
+        run: go build -o bin/crisp${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/crisp
+      - name: hook protocol replay
+        run: go run ./test/e2e/hookreplay -crisp bin/crisp${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: docs link check
+        run: go run ./test/docscheck
+
+  plugins:
+    name: Plugin unit tests (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: DSH Cordis plugin tests
+        working-directory: integrations/dsh-plugin-crisp
+        run: node --test
+      - name: opencode plugin tests
+        working-directory: integrations/opencode-crisp
+        run: node --test

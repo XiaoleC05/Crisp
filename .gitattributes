@@ -1,0 +1,6 @@
+# Normalize text files to LF in the repository so Windows and Linux checkouts
+# produce identical diffs. User-level core.autocrlf still applies on checkout.
+* text=auto eol=lf
+
+# Test fixtures and samples must keep exact bytes/line endings.
+*.jsonl text eol=lf

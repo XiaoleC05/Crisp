@@ -8,7 +8,7 @@
     OpenAI-compatible mock critic for Crisp, installs a project-level
     .codex/hooks.json, and runs the real codex.exe non-interactively.
 
-    Verified scenarios (docs/codex-e2e.md has the measured numbers):
+    Verified scenarios (docs/integrations/codex-cli.md has the measured numbers):
       S0  protocol replay of bin/crisp.exe with realistic hook JSON (12 cases)
       S1  pass: clean answer -> hook fires -> {} -> answer delivered once
       S2  block: critic blocks -> Codex rewrites -> second Stop has
@@ -42,7 +42,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$CodexPath = 'C:\Users\71408\AppData\Local\OpenAI\Codex\bin\5dee10576ec7a5b8\codex.exe',
+    [string]$CodexPath = '',
     [switch]$SkipBuild,
     [switch]$SkipReplay,
     [int]$ScenarioTimeoutSec = 150,
@@ -370,6 +370,23 @@ function Invoke-Scenario {
     }
 }
 
+function Find-CodexCli {
+    $onPath = Get-Command codex -ErrorAction SilentlyContinue
+    if ($onPath -and $onPath.Source -and (Test-Path $onPath.Source)) { return $onPath.Source }
+    $roots = @(
+        (Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'),
+        (Join-Path $env:USERPROFILE 'AppData\Local\OpenAI\Codex\bin')
+    ) | Select-Object -Unique
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        $candidate = Get-ChildItem -Path $root -Recurse -Depth 2 -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($candidate) { return $candidate.FullName }
+    }
+    return ''
+}
+
 function Get-RecordsOrEmpty([string]$Path) {
     return @(Read-JsonlFile $Path)
 }
@@ -378,7 +395,17 @@ function Get-RecordsOrEmpty([string]$Path) {
 # Setup
 # ---------------------------------------------------------------------------
 Write-Section 'Environment'
-if (-not (Test-Path $CodexPath)) { throw ('codex.exe not found: ' + $CodexPath) }
+if (-not $CodexPath) { $CodexPath = Find-CodexCli }
+if (-not $CodexPath -or -not (Test-Path $CodexPath)) {
+    $searched = @(
+        'PATH (codex)',
+        (Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin\*\codex.exe')
+    )
+    Write-Host 'SKIPPED: Codex CLI not found.'
+    Write-Host ('searched: ' + ($searched -join '; '))
+    Write-Host 'Pass -CodexPath <path-to-codex.exe> to run the real CLI harness.'
+    exit 0
+}
 $codexVersionOutput = & $CodexPath --version 2>&1
 if ($LASTEXITCODE -ne 0) { throw ('codex --version failed: ' + ($codexVersionOutput | Out-String)) }
 $script:codexVersion = ($codexVersionOutput | Out-String).Trim()
