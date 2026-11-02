@@ -2,7 +2,9 @@
 
 Status: **verified end-to-end against a real Claude Code 2.1.312 CLI Stop hook**,
 using an isolated config directory and a local mock Anthropic Messages API +
-mock critic under `.tmp/` (no real model, no credentials, no network).
+mock critic (no real model, no credentials, no network). The E2E is committed
+and reproducible, and skips gracefully when the CLI is absent:
+`pwsh -File scripts/e2e-claude.ps1` (section 8.2).
 Crisp's existing hook contract needed no wire-protocol change; two small
 compatibility fixes were made in `internal/hook` (section 7).
 
@@ -27,12 +29,12 @@ unverified. The mock answers/critic verdicts are synthetic: this validates the
 
 | # | Claim | Evidence |
 |---|-------|----------|
-| 1 | A real Claude Code CLI runs Crisp as a Stop hook | Stop invocation captured, `crisp_exit_code=0`, `crisp_stdout` present |
+| 1 | A real Claude Code CLI runs Crisp as a Stop hook | Stop invocation captured, `crisp_exit_code=0`, `crisp_stdout` present; reproduce with `scripts/e2e-claude.ps1` (section 8.2) |
 | 2 | Claude Code's Stop input parses with Crisp's existing `hook.Input` | captured payload; no `turn_id`, extra fields ignored; `last_assistant_message` 193/146 runes |
 | 3 | A material verdict returns `{"decision":"block",...}` and Claude Code regenerates the answer | first Stop `crisp_stdout={"decision":"block","reason":...}`; second model request served the rewritten answer; final `result` is the rewrite |
 | 4 | The second Stop after the rewrite carries `stop_hook_active=true` | captured second Stop payload: `stop_hook_active=true` |
 | 5 | Crisp skips the second Stop without calling the critic (one rewrite per turn) | second Stop stderr: `quality_skip skip_reason=stop_hook_active`, stdout `{}`; exactly **1** critic request, exactly **2** model requests, `num_turns=2` |
-| 6 | The exact command shape in the checked-in `.claude/settings.json` works | direct (`& 'D:\05_Code\Crisp\bin\crisp.exe'`, `shell=powershell`) E2E: 6/6 assertions pass |
+| 6 | The exact command shape in the checked-in `.claude/settings.json` works | script scenario S2 runs the checked-in config directly (`& 'D:\05_Code\Crisp\bin\crisp.exe'`, `shell=powershell`) and passes |
 | 7 | A full Claude payload is not a protocol anomaly in Crisp | unit tests: `Input.Validate()` returns no warnings for the real field set |
 | 8 | Crisp fails open on every critic failure (timeout / HTTP 500 / invalid JSON) with Claude-shaped input | protocol matrix 9/9 (section 8) |
 | 9 | The real `~/.claude/settings.json` is untouched by the E2E | SHA256 hash identical before/after every run (isolated `CLAUDE_CONFIG_DIR`) |
@@ -297,9 +299,9 @@ whitespace, truncated, invalid JSON, array, scalar, trailing data), and JSON
 
 ---
 
-## 8. Verification performed (reproducible protocol matrix)
+## 8. Verification (committed, reproducible)
 
-Unit tests:
+### 8.1 Unit tests (Crisp side)
 
 ```powershell
 go test ./internal/hook -count=1 -v
@@ -307,8 +309,66 @@ gofmt -l internal/hook
 go vet ./internal/hook
 ```
 
-Real-binary protocol matrix with a local mock critic (`test/e2e/mockcritic`),
-Claude-shaped payloads, 9/9 PASS:
+### 8.2 Real Claude Code CLI E2E - `scripts/e2e-claude.ps1`
+
+One command:
+
+```powershell
+pwsh -File scripts/e2e-claude.ps1
+```
+
+The script (PowerShell 7, committed) does the following:
+
+- **Discovers the Claude Code CLI**: `-ClaudePath` when given, otherwise
+  PATH, then the VS Code / VS Code Insiders / Cursor extension bundles
+  (`anthropic.claude-code-*` → `resources/native-binary/claude.exe`, newest
+  version first), then common native/npm install locations. If nothing is
+  found it prints `SKIPPED` with every path it searched and exits 0.
+- **Builds** `bin/crisp.exe` (`-SkipBuild` to reuse) plus the test helpers
+  (`test/e2e/mockanthropic`, `test/e2e/mockcritic`, `test/e2e/hooktap`).
+- **Isolates everything** in `.tmp/e2e/claude/run-<stamp>/`: an isolated
+  `CLAUDE_CONFIG_DIR` plus a scratch project. The real `~/.claude/` is never
+  written; its settings SHA256 is compared before and after.
+- **Starts the deterministic mock Anthropic Messages API**
+  (`test/e2e/mockanthropic`: SSE streaming, canned flawed-then-improved answers,
+  metadata-only request log) and the mock critic (`test/e2e/mockcritic`, which
+  blocks when the flawed-answer marker is in the request), points
+  `ANTHROPIC_BASE_URL` / `QUALITY_GATE_*` at them, and runs the real CLI
+  non-interactively (`-p --model sonnet --dangerously-skip-permissions
+  --output-format json`) with a **USER-level blocking Stop hook**.
+- **Asserts** (both scenarios): the hook fired with a real Claude payload
+  (`Stop`, `stop_hook_active` false then true, `session_id`,
+  `transcript_path`, `last_assistant_message`, and no Codex-only `turn_id`);
+  first Stop block → Claude Code regenerates → second Stop `{}`; exactly
+  **2 conversation model requests** and **1 critic request**; the final result
+  equals the rewritten answer. S1's wrapper capture additionally proves the hook
+  sequence `start,end,start,end` and the block/pass decisions.
+- **Writes** `summary.json` (CLI `--version` output, binary path, searched
+  paths, per-check results, artifact paths) and stops every started process /
+  clears the environment variables in `finally`.
+
+Scenarios:
+
+| # | Scenario | What it proves |
+|---|----------|----------------|
+| S1 | user-level hook via the `test/e2e/hooktap` wrapper | real Stop payload shape, block → rewrite → loop guard, exact request counts |
+| S2 | checked-in `.claude/settings.json` (direct `bin/crisp.exe`, `shell: powershell`, `timeout: 30`) | the shipped project-level config drives the same flow when the repo binary path in it is valid |
+
+Recorded run (2026-11-02): `run-20261102-221324`, Claude Code
+`2.1.312 (Claude Code)`, `go1.26.4 windows/amd64`, **3/3 checks passed**
+(S1, S2, `isolation real ~/.claude untouched`; S1 and S2 each
+`model_requests=2`, `critic_requests=1`). Artifacts (gitignored):
+`.tmp/e2e/claude/run-20261102-221324/` including `summary.json`.
+
+Options: `-ClaudePath <path>`, `-SkipBuild`,
+`-ScenarioTimeoutSec <n>`, `-WorkRoot <dir>`. Exit codes: 0 when all
+checks pass or when the CLI is absent (SKIPPED), 1 on a failed check.
+
+### 8.3 Deterministic protocol matrix (no CLI required)
+
+The Crisp side of the contract is also verified without Claude Code, with
+Claude-shaped payloads against `bin/crisp.exe` + `test/e2e/mockcritic`:
+9/9 PASS.
 
 | Case | Payload / critic | Expected | Observed |
 |------|------------------|----------|----------|
@@ -322,54 +382,21 @@ Claude-shaped payloads, 9/9 PASS:
 | c8 malformed input | `not json` | `{}` | `{}` |
 | c9 `transcript_path=null` | critic pass | `{}` | `{}` |
 
-Verification harness (throwaway, git-ignored): `.tmp/verify-claude-protocol.ps1`
-plus mock critics from `test/e2e/mockcritic`. Run artifacts under
-`.tmp/protocol-verify/` (stdout/stderr per case).
-
-Single-case reproduction without the harness:
+Quick single-case checks (no Claude Code needed):
 
 ```powershell
 $payload = '{"session_id":"s","transcript_path":null,"cwd":"D:\\","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"<your answer>"}'
+$payload | .\bin\crisp.exe                         # {} when no critic is configured (fail open)
 
-# pass: no critic configured -> deterministic rules only, fail open
-$payload | .\bin\crisp.exe                         # {}
-
-# block: mock critic returning block/material on every request
-go run ./test/e2e/mockcritic -addr 127.0.0.1:19001 -verdict block   # separate shell
+# block path: run a mock critic in a separate shell, then point Crisp at it
+go run ./test/e2e/mockcritic -addr 127.0.0.1:19001 -verdict block
 $env:QUALITY_GATE_BASE_URL = 'http://127.0.0.1:19001/v1'
 $env:QUALITY_GATE_MODEL = 'mock-model'
-$env:QUALITY_GATE_MODE = 'balanced'
 $payload | .\bin\crisp.exe                         # {"decision":"block","reason":"..."}
-
-# fail open on critic timeout: -delay 2s above, then set
-$env:QUALITY_GATE_CRITIC_TIMEOUT_MS = '300'
-$payload | .\bin\crisp.exe                         # {}
 
 # rewrite guard: stop_hook_active=true short-circuits before the critic
 $payload = $payload.Replace('"stop_hook_active":false','"stop_hook_active":true')
 $payload | .\bin\crisp.exe                         # {}
-```
-
-Real-CLI E2E harness (throwaway): `.tmp/e2e/claude/stage2.ps1` (captured
-payload via `test/e2e/hooktap`) and `.tmp/e2e/claude/stage3.ps1` (exact
-checked-in command, direct `crisp.exe`). Both used:
-
-- isolated `CLAUDE_CONFIG_DIR` under `.tmp/e2e/claude/`;
-- throwaway mock Anthropic Messages API (`.tmp/e2e/mockapi.go`) - SSE only,
-  no network;
-- mock critic `test/e2e/mockcritic`;
-- environment: `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>`, dummy
-  `ANTHROPIC_API_KEY`, `--dangerously-skip-permissions --output-format json`;
-- isolation check: real `~/.claude/settings.json` SHA256 unchanged.
-
-CLI invocation used for the E2E:
-
-```powershell
-$env:CLAUDE_CONFIG_DIR = '<scratch>'
-$env:ANTHROPIC_BASE_URL  = 'http://127.0.0.1:<mock-api-port>'
-$env:ANTHROPIC_API_KEY   = 'test-key'
-$env:QUALITY_GATE_BASE_URL = 'http://127.0.0.1:<mock-critic-port>/v1'
-'<prompt>' | & 'C:\Users\71408\.vscode\extensions\anthropic.claude-code-2.1.312-win32-x64\resources\native-binary\claude.exe' -p --model sonnet --dangerously-skip-permissions --output-format json
 ```
 
 ---
@@ -395,12 +422,15 @@ Run against scratch copies under `.tmp/` (never the real user config); all check
 1. **No real Anthropic model or network was involved.** The Claude CLI ran
    against a local mock Messages API; answers and critic verdicts were canned.
    This validates hook protocol, decision handling, and the rewrite loop - not
-   output quality on a real model.
+   output quality on a real model. The committed harness
+   (`scripts/e2e-claude.ps1` + `test/e2e/mockanthropic`) reproduces the same
+   setup with the same limitation.
 2. **CLI source:** the tested binary is the one bundled with the VS Code
    extension (`anthropic.claude-code-2.1.312-win32-x64/resources/native-binary/claude.exe`).
    A PATH-installed official `claude` CLI was not available on this machine.
    Behavior may differ across CLI versions; the input field set is versioned by
-   Claude Code, so re-verify after upgrading.
+   Claude Code, so re-verify after upgrading. The harness auto-discovers the
+   CLI and can be pointed at another build with `-ClaudePath`.
 3. **Project/local settings hook trust/review was not exercised.** The E2E used
    isolated *user* settings. Project-level `.claude/settings.json` hooks are
    documented to need workspace trust and/or hook review; that interactive flow
@@ -422,6 +452,9 @@ Run against scratch copies under `.tmp/` (never the real user config); all check
    the real prompt* on a real Claude transcript, but the critic request in the
    E2E was matched only by marker; the exact 2000-rune truncation behavior is
    covered by unit tests, not by the E2E.
+10. **Without a Claude Code CLI the harness exits 0 with `SKIPPED`** (after
+    listing every searched path), so a CI machine lacking the CLI does not
+    perform a real E2E; it is a deliberate no-op, not a pass.
 
 ---
 
