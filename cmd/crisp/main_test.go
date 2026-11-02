@@ -484,60 +484,98 @@ func loadEvalCases(t *testing.T) []evalCase {
 }
 
 // TestRuleEvaluation is the first-layer evaluation from the spec: it measures
-// deterministic coverage and false positives over the 30 regression samples.
+// deterministic coverage, material detection, false positives and critic
+// routing (balanced mode) over the 30 regression samples.
 func TestRuleEvaluation(t *testing.T) {
 	cases := loadEvalCases(t)
 	if len(cases) != 30 {
 		t.Fatalf("expected 30 regression samples, got %d", len(cases))
 	}
 
+	problemCategories := []string{"duplicate_conclusion", "filler_opening", "over_fragmentation", "redundant_explanation"}
+	goodCategories := []string{"good_long", "good_short"}
+
 	type bucket struct {
-		total    int
-		detected int
-		material int
+		total        int
+		findings     int
+		withSignals  int
+		material     int
+		criticRouted int
 	}
 	byCategory := map[string]*bucket{}
-	var goodTotal, goodMaterial int
+	for _, name := range append(append([]string{}, problemCategories...), goodCategories...) {
+		byCategory[name] = &bucket{}
+	}
+
+	balanced := policy.Config{Mode: policy.ModeBalanced}.Normalize()
+	var goodTotal, goodFindings, goodMaterial int
+	var analyzeTotal, analyzeMax time.Duration
 
 	for _, c := range cases {
+		start := time.Now()
 		report := checker.Analyze(c.Answer)
+		elapsed := time.Since(start)
+		analyzeTotal += elapsed
+		if elapsed > analyzeMax {
+			analyzeMax = elapsed
+		}
+
 		b := byCategory[c.Category]
 		if b == nil {
-			b = &bucket{}
-			byCategory[c.Category] = b
+			t.Fatalf("unknown sample category %q", c.Category)
 		}
 		b.total++
+		b.findings += len(report.Findings)
 		if len(report.Findings) > 0 {
-			b.detected++
+			b.withSignals++
 		}
 		if report.HasMaterial() {
 			b.material++
 		}
+		if policy.NeedsCritic(balanced, report, c.Answer) {
+			b.criticRouted++
+		}
 		if c.Expected == "pass" {
 			goodTotal++
+			goodFindings += len(report.Findings)
 			if report.HasMaterial() {
 				goodMaterial++
 			}
 		}
 	}
 
-	for category, b := range byCategory {
-		t.Logf("category=%-22s total=%d rule_signals=%d material=%d", category, b.total, b.detected, b.material)
+	var problemTotal, problemDetected, problemMaterial, problemRouted int
+	for _, category := range problemCategories {
+		b := byCategory[category]
+		problemTotal += b.total
+		problemDetected += b.withSignals
+		problemMaterial += b.material
+		problemRouted += b.criticRouted
+		t.Logf("category=%-22s total=%d findings=%d with_signal=%d material=%d critic_routed=%d",
+			category, b.total, b.findings, b.withSignals, b.material, b.criticRouted)
 	}
-	t.Logf("false_positive_material=%d/%d", goodMaterial, goodTotal)
+	for _, category := range goodCategories {
+		b := byCategory[category]
+		t.Logf("category=%-22s total=%d findings=%d with_signal=%d material=%d critic_routed=%d",
+			category, b.total, b.findings, b.withSignals, b.material, b.criticRouted)
+	}
+	t.Logf("rule_coverage_with_signal=%d/%d rule_material=%d/%d critic_routed=%d/%d",
+		problemDetected, problemTotal, problemMaterial, problemTotal, problemRouted, problemTotal)
+	t.Logf("false_positive_findings=%d/%d false_positive_material=%d/%d", goodFindings, goodTotal, goodMaterial, goodTotal)
+	t.Logf("rule_analyze_latency avg=%v max=%v samples=%d", analyzeTotal/time.Duration(len(cases)), analyzeMax, len(cases))
 
+	if goodFindings != 0 {
+		t.Fatalf("normal answers must produce zero rule findings, got %d", goodFindings)
+	}
 	if goodMaterial != 0 {
 		t.Fatalf("normal answers must never produce material rule findings, got %d/%d", goodMaterial, goodTotal)
 	}
-
+	if problemRouted != problemTotal {
+		t.Fatalf("balanced mode must route every problem sample to the critic, got %d/%d", problemRouted, problemTotal)
+	}
 	for _, category := range []string{"duplicate_conclusion", "filler_opening"} {
-		b := byCategory[category]
-		if b == nil || b.detected < 4 {
-			got := 0
-			if b != nil {
-				got = b.detected
-			}
-			t.Fatalf("expected deterministic coverage >= 4/5 for %s, got %d", category, got)
+		if b := byCategory[category]; b.withSignals < 4 {
+			t.Fatalf("expected deterministic coverage >= 4/5 for %s, got %d", category, b.withSignals)
 		}
 	}
 }
