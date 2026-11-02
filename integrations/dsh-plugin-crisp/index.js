@@ -34,11 +34,23 @@ export function apply(ctx, config) {
  *
  * @param {object} ctx Cordis plugin context
  * @param {object} config Loader row config
- * @param {object} deps {env, platform, logLine, runner, schedule, isAgentLoopRequest}
+ * @param {object} deps {env, platform, logLine, runner, schedule, isAgentLoopRequest, getLlm, background}
  * @returns {object} the gate handle
  */
 export function applyWithDeps(ctx, config, deps) {
-  const gate = createGate(ctx, config, deps);
+  // Resolve the Harness LLM service lazily: the plugin still mounts in
+  // profiles without one, and the external-http critic never touches it.
+  const getLlm =
+    typeof deps.getLlm === "function"
+      ? deps.getLlm
+      : () => {
+          try {
+            return ctx.get?.("llm") ?? ctx.llm;
+          } catch {
+            return undefined;
+          }
+        };
+  const gate = createGate(ctx, config, { ...deps, getLlm });
   if (typeof ctx?.effect === "function") {
     ctx.effect(() => () => gate.dispose(), "crisp-quality-gate.lifecycle()");
   }

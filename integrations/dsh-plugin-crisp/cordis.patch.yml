@@ -20,6 +20,11 @@
 # logFile: "" logs the structured lines to stderr; set a path to append JSONL.
 # envPassthrough lists variables copied from the Harness environment into the
 # spawned Crisp process (QUALITY_GATE_* critic settings live there).
+#
+# critic: http (default) keeps the external OpenAI-compatible Critic.
+# Set critic: harness to review with the Harness LLM service instead (no
+# external key; e.g. criticProvider: deepseek-account, criticModel:
+# deepseek-flash, criticReasoningEffort: off, criticTimeoutMs: 15000).
 - insert:
     - id: crisp-quality-gate
       name: '@local/crisp-quality-gate'

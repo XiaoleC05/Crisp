@@ -29,6 +29,28 @@ export const MODE_GUARD = "guard";
 export const MODES = Object.freeze([MODE_OBSERVE, MODE_GUARD]);
 
 /**
+ * Semantic critic backends.
+ * - `http` (default, unchanged): the spawned Crisp binary calls an external
+ *   OpenAI-compatible endpoint.
+ * - `harness`: the spawned binary runs deterministic rules only, and this
+ *   plugin asks the Harness LLM service (ctx.llm) for the semantic verdict.
+ */
+export const CRITIC_HTTP = "http";
+export const CRITIC_HARNESS = "harness";
+export const CRITICS = Object.freeze([CRITIC_HTTP, CRITIC_HARNESS]);
+
+/** Harness-critic bounds; the external-http path keeps the Go defaults. */
+export const DEFAULT_CRITIC_TIMEOUT_MS = 15_000;
+export const MIN_CRITIC_TIMEOUT_MS = 1_000;
+export const MAX_CRITIC_TIMEOUT_MS = 30_000;
+export const DEFAULT_CRITIC_REASONING_EFFORT = "off";
+export const CRITIC_REASONING_EFFORTS = Object.freeze(["off", "low", "high", "max"]);
+/** Small output cap: the critic returns one JSON object, never prose. */
+export const HARNESS_CRITIC_MAX_TOKENS = 1024;
+/** Deterministic judgement: the Go critic also uses temperature 0. */
+export const HARNESS_CRITIC_TEMPERATURE = 0;
+
+/**
  * Byte-for-byte the rewrite instruction from internal/policy/decision.go
  * (`policy.RewriteReason`). Keep it identical: the rewrite must ask for a
  * complete non-redundant answer, never for a shorter one.
@@ -199,6 +221,39 @@ export function resolveConfig(raw, env = process.env, platform = process.platfor
   const rewriteInstruction =
     nonEmptyString(input.rewriteInstruction) ?? DEFAULT_REWRITE_INSTRUCTION;
 
+  // Semantic critic backend. `http` is the historical default and its whole
+  // code path stays byte-identical; `harness` is opt-in.
+  let critic = nonEmptyString(input.critic) ?? CRITIC_HTTP;
+  critic = critic.toLowerCase();
+  if (!CRITICS.includes(critic)) {
+    warnings.push(`unknown critic ${JSON.stringify(critic)}; falling back to ${CRITIC_HTTP}`);
+    critic = CRITIC_HTTP;
+  }
+  const criticProvider = nonEmptyString(input.criticProvider) ?? "";
+  const criticModel = nonEmptyString(input.criticModel) ?? "";
+  if (critic === CRITIC_HARNESS && (criticProvider === "" || criticModel === "")) {
+    warnings.push(
+      `critic "${CRITIC_HARNESS}" needs criticProvider and criticModel; reviews will fail open until both are set`,
+    );
+  }
+  let criticReasoningEffort =
+    nonEmptyString(input.criticReasoningEffort) ?? DEFAULT_CRITIC_REASONING_EFFORT;
+  criticReasoningEffort = criticReasoningEffort.toLowerCase();
+  if (!CRITIC_REASONING_EFFORTS.includes(criticReasoningEffort)) {
+    warnings.push(
+      `unknown criticReasoningEffort ${JSON.stringify(criticReasoningEffort)}; falling back to ${DEFAULT_CRITIC_REASONING_EFFORT}`,
+    );
+    criticReasoningEffort = DEFAULT_CRITIC_REASONING_EFFORT;
+  }
+  const criticTimeoutMs = clamp(
+    asNumber(input.criticTimeoutMs, DEFAULT_CRITIC_TIMEOUT_MS),
+    MIN_CRITIC_TIMEOUT_MS,
+    MAX_CRITIC_TIMEOUT_MS,
+  );
+  if (asNumber(input.criticTimeoutMs, DEFAULT_CRITIC_TIMEOUT_MS) !== criticTimeoutMs) {
+    warnings.push(`criticTimeoutMs clamped to ${criticTimeoutMs}`);
+  }
+
   return {
     pluginVersion: PLUGIN_VERSION,
     enabled,
@@ -209,6 +264,11 @@ export function resolveConfig(raw, env = process.env, platform = process.platfor
     maxRunes,
     logFile,
     rewriteInstruction,
+    critic,
+    criticProvider,
+    criticModel,
+    criticReasoningEffort,
+    criticTimeoutMs,
     envPassthrough: normalizePassthrough(input.envPassthrough),
     env: optionEnv,
     warnings,

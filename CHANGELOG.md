@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- DSH Hint 插件新增 **`critic: harness`** 模式：语义审查改走 Harness 自身的 `ctx.llm`
+  （可使用已登录的 DeepSeek-V4.1-Flash，`reasoningEffort: off` 关闭思考模式），无需外部
+  OpenAI-compatible endpoint 或 API Key；确定性规则仍由本地 `crisp` 二进制完成。
+  外部 HTTP Critic 仍为默认模式。observe 模式下审查异步执行、不增加对话延迟；guard 模式在
+  turn 结束前等待判定以排队一次重写。见 [docs/integrations/deepseek-harness.md](docs/integrations/deepseek-harness.md)。
+
 ## [0.1.0] - 2026-11-02
 
 首个可用版本：Go 质量检查核心 + 多 Agent 接入 + 回归测试与真实 CLI E2E。

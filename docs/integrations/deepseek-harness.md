@@ -30,6 +30,10 @@ a DeepSeek Harness Host plugin.
   [internal/policy/decision.go](../../internal/policy/decision.go). The rewrite is
   a new turn; a rewrite turn is never gated again, so a bad rewrite cannot
   loop.
+- The semantic Critic can be an **external OpenAI-compatible HTTP endpoint**
+  (default) or the **Harness's own signed-in model** through `ctx.llm`
+  (`critic: harness`, e.g. DeepSeek-V4.1-Flash with thinking off). See
+  [Critic modes](#critic-modes).
 
 Every failure (spawn error, timeout, non-zero exit, bad JSON) is a fail-open
 pass, mirroring the Go core.
@@ -302,6 +306,11 @@ is defaulted defensively at activation:
 | `env` | `{}` | Extra child environment; wins over passthrough. Use this to pin `QUALITY_GATE_*` instead of relying on profile `.env` files. |
 | `envPassthrough` | `QUALITY_GATE_*`, `CRISP_*` list | Names copied from the Harness process environment; entries ending in `*` match by prefix. |
 | `rewriteInstruction` | fixed Chinese instruction | Must stay byte-identical to `policy.RewriteReason`; override only to track that source. |
+| `critic` | `http` | Semantic critic backend: `http` (external OpenAI-compatible endpoint, historical behavior) or `harness` (signed-in Harness model via `ctx.llm`). |
+| `criticProvider` | `""` | Harness mode only: LLM provider id, e.g. `deepseek-account`. Required for `critic: harness` (reviews fail open without it). |
+| `criticModel` | `""` | Harness mode only: model id, e.g. `deepseek-flash`. Required for `critic: harness`. |
+| `criticReasoningEffort` | `off` | Harness mode only: `off` / `low` / `high` / `max`; anything else falls back to `off`. |
+| `criticTimeoutMs` | `15000` | Harness mode only: bound for the critic model call (clamped 1000–30000). |
 
 Example (override in the profile's own `cordis.patch.yml`, or in a `--patch`
 overlay): a matching override replaces the whole config, so restate what you keep.
@@ -319,6 +328,73 @@ overlay): a matching override replaces the whole config, so restate what you kee
       QUALITY_GATE_MODEL: 'critic-model'
       QUALITY_GATE_MODE: 'balanced'
 ```
+
+### Critic modes
+
+The gate has two interchangeable semantic-critic backends; both use the same
+deterministic rules from the local `crisp` child and the same strict verdict
+schema/policy (block only on `severity: material`; every failure fails open).
+
+**External HTTP critic (default, unchanged).** The spawned `crisp` binary runs
+rules and calls the OpenAI-compatible endpoint configured with
+`QUALITY_GATE_BASE_URL` / `QUALITY_GATE_API_KEY` / `QUALITY_GATE_MODEL`. This is
+the historical behavior; no config change is needed for existing deployments.
+
+**Harness critic (`critic: harness`, opt-in).** The plugin asks the signed-in
+DeepSeek Harness model through `ctx.llm.stream(...)`; no external endpoint or API
+key is needed, and account authentication is resolved by the Harness. The
+spawned `crisp` child runs rules only (the plugin clears
+`QUALITY_GATE_BASE_URL`/`QUALITY_GATE_MODEL` for that child) and supplies
+`rule_types`; the child's own decision/fail-open state is ignored. The critic
+call uses `temperature: 0`, `maxTokens: 1024`, and `reasoningEffort: "off"`
+(the DeepSeek transport maps that to `thinking: {type: "disabled"}`).
+The call deliberately carries **no `sessionId` and no `purpose`**: the gate's
+own `llm/stream` wrapper only inspects agent-loop requests (which always carry a
+`sessionId`), so the critic request is ignored by the gate and can never recurse;
+it also is not conversation material, so it is not written to the session log.
+
+Latency: the harness critic adds **one extra model call per delivered answer**
+(typically ~1–3 s, bounded by `criticTimeoutMs`). In **observe** mode the whole
+evaluation is detached (fire-and-forget): the check is logged, but the extra
+round-trip never delays the conversation or the durable turn end. In **guard**
+mode the evaluation is awaited inside the stream finalizer, because the rewrite
+followup must be queued from the terminal chunk to become the next turn. If the
+rules child itself fails (spawn/timeout/bad JSON), the gate logs
+`crisp_quality_error` with `phase: "rules"`, keeps `rule_types` empty, and still
+asks the harness critic; only a harness-critic failure makes the overall result
+`fail_open`.
+
+Configuration (override in the profile's own `cordis.patch.yml`, or a
+`--patch` overlay; a matching override replaces the whole config, so restate
+the fields you keep):
+
+```yaml
+- id: crisp-quality-gate
+  config:
+    mode: observe            # or guard
+    binaryPath: 'D:\05_Code\Crisp\bin\crisp.exe'
+    timeoutMs: 30000
+    minRunes: 40
+    logFile: ''              # '' = stderr; or a JSONL path
+    critic: harness
+    criticProvider: "deepseek-account"
+    criticModel: "deepseek-flash"
+    criticReasoningEffort: "off"
+    criticTimeoutMs: 15000
+
+# Minimal critic-only override (works when the rest of the row config stays
+# the bundle default and the plugin is installed in this checkout):
+# - id: crisp-quality-gate
+#   config:
+#     critic: harness
+#     criticProvider: "deepseek-account"
+#     criticModel: "deepseek-flash"
+#     criticReasoningEffort: "off"
+#     criticTimeoutMs: 15000
+```
+
+In harness mode a `crisp_quality_check` record additionally carries
+`"critic":"harness"`; all other fields are the same as the HTTP mode.
 
 ### Log records
 
@@ -442,6 +518,20 @@ one-off measurements:
   adapter dispatch path; the gate observed the terminal `finish:error` chunk and
   logged `crisp_quality_skip ... "skip_reason":"finish_error"` with the correct
   session id and turn 1.
+- **Harness-critic path through the real `ctx.llm` service.** A scratch headless
+  run (isolated `DSH_HOME`, local Messages-compatible mock provider via
+  `DEEPSEEK_BASE_URL`, `criticProvider: deepseek-official` so the headless
+  API-key route could be used) exercised the full guard flow with
+  `critic: harness`: turn 1 was blocked with `rule_types:
+  ["duplicate_sentence","filler_opening"]`, `critic_called:true`,
+  `critic_latency_ms:3`, `critic_tokens:79`; exactly one followup was queued;
+  turn 2 was checked with `decision:"pass"` (`critic_pass`,
+  `critic_tokens:55`) and the final stdout was the rewritten answer. The mock
+  received exactly 2 conversation calls + 2 critic calls with no recursive
+  check. This verifies the harness-critic wiring and the "no `sessionId` on the
+  critic call" recursion guard against the real Harness LLM service; it does
+  **not** verify the signed-in `deepseek-account` route, which needs the live
+  profile change and a restart (see section 6.5).
 
 ### 6.4 Guard flow measured numbers
 
@@ -474,6 +564,7 @@ original manual run that motivated it and from the harness run:
 | Full rewrite on the user's real profile / long-lived Web/TUI surface | **Not executed.** Guard followup was verified through the headless runner by the committed harness; the session-event and followup APIs used are the same, but no GUI session was driven. |
 | Rendering of the plugin's title/description/icon in Plugin Manager | **Not executed** (no browser control / no plugin-manager tool). Locale JSON, exports, and SVG validity are covered by contract tests only. |
 | Real DeepSeek provider and real Critic service | **Not used.** The E2E used local protocol mocks; no credentials or network calls were involved. |
+| Live `critic: harness` call on the signed-in `deepseek-account` route | **Not verified in this session.** The harness-critic path is covered by hermetic unit tests with a fake `ctx.llm`; a live call needs the new config applied to the running Harness and a restart (the Lead applies it and asks the user to restart). The HTTP critic remains the default until then. |
 | `@deepseek-ai/dsh-llm-replay` headless replay | **Blocked:** the package is not shipped in this installation's `app.asar` (checked by listing; only the source-checkout catalog mentions it). The committed Messages mock is used instead. |
 | Other DSH versions, non-Windows platforms, paths with spaces | **Not verified.** The harness derives the plugin path from the repository and needs an installed `dsh`; it was measured only against 0.2.1-rc.5 on Windows. |
 | Which detector branch ran in the E2E (lazy marker import vs `purpose`/`sessionId` fallback) | **Not observed.** Both produce the same decision; titles/compaction are filtered by `purpose` regardless. |

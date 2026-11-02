@@ -5,9 +5,17 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  CRITIC_HARNESS,
+  CRITIC_HTTP,
+  DEFAULT_CRITIC_REASONING_EFFORT,
+  DEFAULT_CRITIC_TIMEOUT_MS,
   DEFAULT_REWRITE_INSTRUCTION,
   DEFAULT_TIMEOUT_MS,
+  HARNESS_CRITIC_MAX_TOKENS,
+  HARNESS_CRITIC_TEMPERATURE,
+  MAX_CRITIC_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
+  MIN_CRITIC_TIMEOUT_MS,
   MIN_TIMEOUT_MS,
   MODE_GUARD,
   MODE_OBSERVE,
@@ -35,6 +43,14 @@ test("defaults are defensive and observe-only", () => {
   assert.equal(config.minRunes, 40);
   assert.equal(config.maxRunes, 200_000);
   assert.equal(config.logFile, "");
+  assert.equal(config.critic, CRITIC_HTTP);
+  assert.equal(config.criticProvider, "");
+  assert.equal(config.criticModel, "");
+  assert.equal(config.criticReasoningEffort, DEFAULT_CRITIC_REASONING_EFFORT);
+  assert.equal(config.criticTimeoutMs, DEFAULT_CRITIC_TIMEOUT_MS);
+  assert.equal(config.criticTimeoutMs, 15_000);
+  assert.equal(HARNESS_CRITIC_MAX_TOKENS, 1024);
+  assert.equal(HARNESS_CRITIC_TEMPERATURE, 0);
   assert.deepEqual(config.warnings, []);
   assert.ok(config.binaryPath.endsWith("crisp.exe"));
   assert.ok(config.binaryPath.startsWith(REPO_ROOT));
@@ -179,4 +195,55 @@ test("buildChildEnv supports prefix passthrough and config overrides", () => {
   assert.equal(childEnv.QUALITY_GATE_MODEL, "m");
   assert.equal(childEnv.QUALITY_GATE_MODE, "economy");
   assert.equal(childEnv.KEEP_ME, undefined);
+});
+test("harness critic configuration is normalized", () => {
+  const config = resolveConfig(
+    {
+      critic: "HARNESS",
+      criticProvider: " deepseek-account ",
+      criticModel: " deepseek-flash ",
+      criticReasoningEffort: "OFF",
+      criticTimeoutMs: 12_345,
+    },
+    {},
+    "win32",
+  );
+  assert.equal(config.critic, CRITIC_HARNESS);
+  assert.equal(config.criticProvider, "deepseek-account");
+  assert.equal(config.criticModel, "deepseek-flash");
+  assert.equal(config.criticReasoningEffort, "off");
+  assert.equal(config.criticTimeoutMs, 12_345);
+  assert.deepEqual(config.warnings, []);
+});
+
+test("unknown critic settings fall back with warnings", () => {
+  const config = resolveConfig(
+    { critic: "local", criticReasoningEffort: "extreme" },
+    {},
+    "win32",
+  );
+  assert.equal(config.critic, CRITIC_HTTP);
+  assert.equal(config.criticReasoningEffort, "off");
+  assert.ok(config.warnings.some((warning) => warning.includes("unknown critic")));
+  assert.ok(config.warnings.some((warning) => warning.includes("unknown criticReasoningEffort")));
+});
+
+test("harness critic without provider/model warns but still mounts", () => {
+  const config = resolveConfig({ critic: "harness" }, {}, "win32");
+  assert.equal(config.critic, CRITIC_HARNESS);
+  assert.ok(config.warnings.some((warning) => warning.includes("needs criticProvider and criticModel")));
+  // http stays warning-free so existing deployments keep the old config.
+  assert.deepEqual(resolveConfig({ critic: "http" }, {}, "win32").warnings, []);
+});
+
+test("critic timeout is clamped to the documented bounds", () => {
+  assert.equal(resolveConfig({ criticTimeoutMs: 1 }, {}, "win32").criticTimeoutMs, MIN_CRITIC_TIMEOUT_MS);
+  assert.equal(
+    resolveConfig({ criticTimeoutMs: 999_999 }, {}, "win32").criticTimeoutMs,
+    MAX_CRITIC_TIMEOUT_MS,
+  );
+  assert.equal(
+    resolveConfig({ criticTimeoutMs: "nope" }, {}, "win32").criticTimeoutMs,
+    DEFAULT_CRITIC_TIMEOUT_MS,
+  );
 });

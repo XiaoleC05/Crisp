@@ -22,8 +22,15 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { DEFAULT_REWRITE_INSTRUCTION, MODE_GUARD, MODE_OBSERVE, resolveConfig } from "./config.js";
+import {
+  CRITIC_HARNESS,
+  DEFAULT_REWRITE_INSTRUCTION,
+  MODE_GUARD,
+  MODE_OBSERVE,
+  resolveConfig,
+} from "./config.js";
 import { checkAnswer, spawnCheckTextRunner } from "./crisp.js";
+import { createHarnessCritic, materialBlock } from "./harness-critic.js";
 import { createLogger } from "./log.js";
 
 /** How many turns a session's rewrite memory keeps before dropping the oldest. */
@@ -174,6 +181,31 @@ export function createGate(ctx, rawConfig, deps = {}) {
   const runner = typeof deps.runner === "function" ? deps.runner : spawnCheckTextRunner;
   const explicitDetector =
     typeof deps.isAgentLoopRequest === "function" ? deps.isAgentLoopRequest : undefined;
+  const getLlm =
+    typeof deps.getLlm === "function"
+      ? deps.getLlm
+      : () => {
+          try {
+            return ctx.get?.("llm") ?? ctx.llm;
+          } catch {
+            return undefined;
+          }
+        };
+  // Observe mode runs the check detached so the extra harness-critic model
+  // round-trip never delays the conversation or the durable turn end. Guard
+  // mode awaits it because the rewrite followup must be queued at the terminal
+  // chunk (see docs). Tests inject a queueing background to observe both.
+  const background =
+    typeof deps.background === "function"
+      ? deps.background
+      : (fn) => {
+          const result = fn();
+          if (result && typeof result.catch === "function") result.catch(() => {});
+        };
+  const harnessCritic =
+    config.critic === CRITIC_HARNESS
+      ? createHarnessCritic({ config, getLlm, deps: { now: deps.now } })
+      : null;
 
   /** @type {Map<string, object>} per-session turn/guard state */
   const states = new Map();
@@ -308,6 +340,118 @@ export function createGate(ctx, rawConfig, deps = {}) {
     }
   }
 
+  /**
+   * External HTTP critic path: the spawned Crisp binary runs rules and calls
+   * its configured OpenAI-compatible endpoint. Behavior and log field order are
+   * unchanged from the historical implementation.
+   */
+  async function evaluateHttp(text, runes) {
+    const started = Date.now();
+    const result = await checkAnswer({ text, config, runner, env: baseEnv });
+    return {
+      decision: result.decision,
+      reason_type: result.reasonType || null,
+      rule_types: result.ruleTypes,
+      critic_called: result.criticCalled,
+      fail_open: result.failOpen,
+      answer_runes: runes,
+      natural_runes: result.naturalRunes ?? null,
+      critic_latency_ms: result.criticLatencyMs ?? null,
+      critic_tokens: result.criticTokens ?? null,
+      check_latency_ms: Date.now() - started,
+      crisp_elapsed_ms: result.crispElapsedMs ?? null,
+      exit_code: result.exitCode,
+      timed_out: result.timedOut,
+      binary: config.binaryPath,
+      ...(result.error === undefined ? {} : { error: result.error }),
+    };
+  }
+
+  /**
+   * Harness-native critic path: the spawned binary is told to run rules only
+   * (critic env cleared) and supplies rule_types; the semantic review is one
+   * ctx.llm.stream call on the signed-in Harness model. The child's own
+   * decision/fail_open is ignored; its process failures keep rule_types empty
+   * and are logged as phase:"rules", but only a harness-critic failure makes
+   * the overall result fail open.
+   */
+  async function evaluateHarness(state, text, runes) {
+    const started = Date.now();
+    let ruleResult = null;
+    let ruleError;
+    try {
+      const ruleConfig = {
+        ...config,
+        env: { ...config.env, QUALITY_GATE_BASE_URL: "", QUALITY_GATE_MODEL: "" },
+      };
+      ruleResult = await checkAnswer({ text, config: ruleConfig, runner, env: baseEnv });
+      if (ruleResult.error !== undefined) ruleError = ruleResult.error;
+    } catch (error) {
+      ruleError = messageOf(error);
+    }
+    if (ruleError !== undefined) {
+      log({
+        event: "crisp_quality_error",
+        mode: config.mode,
+        session_id: state.sessionId,
+        turn: state.currentTurn,
+        phase: "rules",
+        error: ruleError,
+      });
+    }
+    const ruleTypes = Array.isArray(ruleResult?.ruleTypes) ? ruleResult.ruleTypes : [];
+    const naturalRunes = ruleResult?.naturalRunes ?? null;
+    const crispElapsedMs = ruleResult?.crispElapsedMs ?? null;
+    const exitCode = ruleResult?.exitCode ?? null;
+    const timedOut = ruleResult?.timedOut ?? false;
+
+    let verdict;
+    let criticError;
+    try {
+      if (harnessCritic === null) throw new Error("harness critic is not initialized");
+      verdict = await harnessCritic.review({ answer: text, userMessage: "", ruleTypes });
+    } catch (error) {
+      criticError = messageOf(error);
+    }
+    const checkLatencyMs = Date.now() - started;
+    if (criticError !== undefined) {
+      return {
+        decision: "pass",
+        reason_type: null,
+        rule_types: ruleTypes,
+        critic_called: true,
+        fail_open: true,
+        answer_runes: runes,
+        natural_runes: naturalRunes,
+        critic_latency_ms: null,
+        critic_tokens: null,
+        check_latency_ms: checkLatencyMs,
+        crisp_elapsed_ms: crispElapsedMs,
+        exit_code: exitCode,
+        timed_out: timedOut,
+        binary: config.binaryPath,
+        error: criticError,
+      };
+    }
+    const blocked = materialBlock(verdict);
+    return {
+      decision: blocked ? "block" : "pass",
+      reason_type: blocked ? verdict.issues?.[0]?.type?.trim() || "semantic" : "critic_pass",
+      rule_types: ruleTypes,
+      critic_called: true,
+      fail_open: false,
+      answer_runes: runes,
+      natural_runes: naturalRunes,
+      critic_latency_ms: verdict.latencyMs,
+      critic_tokens: verdict.usage?.totalTokens ?? null,
+      check_latency_ms: checkLatencyMs,
+      crisp_elapsed_ms: crispElapsedMs,
+      exit_code: exitCode,
+      timed_out: timedOut,
+      binary: config.binaryPath,
+    };
+  }
+
   async function evaluate(state, acc) {
     // A step that called a tool is not a delivered answer; silently skip it.
     if (acc.hasToolCall()) return;
@@ -334,33 +478,21 @@ export function createGate(ctx, rawConfig, deps = {}) {
       return;
     }
 
-    const started = Date.now();
-    const result = await checkAnswer({ text, config, runner, env: baseEnv });
-    const checkLatencyMs = Date.now() - started;
+    const outcome =
+      config.critic === CRITIC_HARNESS
+        ? await evaluateHarness(state, text, runes)
+        : await evaluateHttp(text, runes);
     log({
       event: "crisp_quality_check",
       mode: config.mode,
       session_id: state.sessionId,
       turn: state.currentTurn,
-      decision: result.decision,
-      reason_type: result.reasonType || null,
-      rule_types: result.ruleTypes,
-      critic_called: result.criticCalled,
-      fail_open: result.failOpen,
-      answer_runes: runes,
-      natural_runes: result.naturalRunes ?? null,
-      critic_latency_ms: result.criticLatencyMs ?? null,
-      critic_tokens: result.criticTokens ?? null,
-      check_latency_ms: checkLatencyMs,
-      crisp_elapsed_ms: result.crispElapsedMs ?? null,
-      exit_code: result.exitCode,
-      timed_out: result.timedOut,
-      binary: config.binaryPath,
-      ...(result.error === undefined ? {} : { error: result.error }),
+      ...outcome,
+      ...(config.critic === CRITIC_HARNESS ? { critic: CRITIC_HARNESS } : {}),
     });
 
-    if (config.mode !== MODE_GUARD || result.failOpen || result.decision !== "block") return;
-    requestRewrite(state, { answerRunes: runes, reasonType: result.reasonType || null });
+    if (config.mode !== MODE_GUARD || outcome.fail_open || outcome.decision !== "block") return;
+    requestRewrite(state, { answerRunes: runes, reasonType: outcome.reason_type || null });
   }
 
   /** Handle one durable session event; only turn boundaries matter here. */
@@ -416,16 +548,27 @@ export function createGate(ctx, rawConfig, deps = {}) {
         completed = true;
       } finally {
         if (completed && !disposed) {
-          try {
-            if (await isAgentLoopRequest(options)) await evaluate(state, acc);
-          } catch (error) {
-            log({
-              event: "crisp_quality_error",
-              mode: config.mode,
-              session_id: sessionId,
-              phase: "after_stream",
-              error: messageOf(error),
-            });
+          const runEvaluate = async () => {
+            if (disposed) return;
+            try {
+              if (await isAgentLoopRequest(options)) await evaluate(state, acc);
+            } catch (error) {
+              log({
+                event: "crisp_quality_error",
+                mode: config.mode,
+                session_id: sessionId,
+                phase: "after_stream",
+                error: messageOf(error),
+              });
+            }
+          };
+          if (config.mode === MODE_GUARD) {
+            // The rewrite must be queued from the terminal chunk, inside the
+            // step, so the followup becomes the next turn.
+            await runEvaluate();
+          } else {
+            // Observe mode must not delay the conversation: fire and forget.
+            background(runEvaluate);
           }
         }
       }
@@ -451,6 +594,15 @@ export function createGate(ctx, rawConfig, deps = {}) {
       min_runes: config.minRunes,
       max_runes: config.maxRunes,
       log_file: typeof config.logFile === "string" && config.logFile !== "" ? config.logFile : "stderr",
+      ...(config.critic === CRITIC_HARNESS
+        ? {
+            critic: CRITIC_HARNESS,
+            critic_provider: config.criticProvider,
+            critic_model: config.criticModel,
+            critic_reasoning_effort: config.criticReasoningEffort,
+            critic_timeout_ms: config.criticTimeoutMs,
+          }
+        : {}),
       warnings: config.warnings,
     });
   }

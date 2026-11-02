@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
 /** Create a minimal Cordis-like plugin context. */
-export function createFakeCtx({ agents } = {}) {
+export function createFakeCtx({ agents, llm } = {}) {
   const handlers = new Map();
   const effects = [];
   return {
@@ -26,6 +26,7 @@ export function createFakeCtx({ agents } = {}) {
     },
     get(name) {
       if (name === "agents") return agents;
+      if (name === "llm") return llm;
       return undefined;
     },
     handlersFor(name) {
@@ -131,6 +132,60 @@ export function rawBlock(overrides = {}) {
 /** Raw runner result that must be treated as fail-open. */
 export function rawFailure(overrides = {}) {
   return { stdout: "", stderr: "", exitCode: 0, timedOut: false, ...overrides };
+}
+
+/** Raw rule-only crisp result: fail_open (no HTTP critic) but rule_types present. */
+export function rawRules(overrides = {}) {
+  return {
+    stdout: JSON.stringify({
+      decision: "pass",
+      reason_type: "not_reviewed",
+      rule_types: ["duplicate_sentence", "filler_opening"],
+      critic_called: false,
+      fail_open: true,
+      answer_runes: 66,
+      natural_runes: 64,
+      critic_latency_ms: 0,
+      critic_tokens: 0,
+      elapsed_ms: 2,
+      ...overrides,
+    }),
+    stderr: "",
+    exitCode: 0,
+    timedOut: false,
+  };
+}
+
+/**
+ * A fake Harness LLM service: ctx.llm.stream(options) yields the scripted
+ * chunks for each call and records the options it received.
+ *
+ * @param {object[] | Function} script chunk array, a function returning one,
+ *   or an async iterable for hanging/streaming simulations
+ */
+export function createFakeLlm(script = []) {
+  const calls = [];
+  return {
+    calls,
+    stream(options) {
+      calls.push(options);
+      const entry = typeof script === "function" ? script(options, calls.length - 1) : script;
+      if (entry && typeof entry[Symbol.asyncIterator] === "function") return entry;
+      return (async function* streamChunks() {
+        for (const chunk of entry ?? []) yield chunk;
+      })();
+    },
+  };
+}
+
+/** Build one critic-model chunk stream that returns a JSON verdict. */
+export function criticChunks(verdict, options = {}) {
+  const payload = typeof verdict === "string" ? verdict : JSON.stringify(verdict);
+  const chunks = [];
+  if (options.usage) chunks.push({ type: "usage", usage: options.usage });
+  chunks.push(...textChunks(payload));
+  chunks.push({ type: "finish", reason: options.reason ?? { kind: "stop" } });
+  return chunks;
 }
 
 /** Build text-delta chunks for one block. */
