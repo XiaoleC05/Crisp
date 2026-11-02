@@ -1,0 +1,8 @@
+# build artifacts
+/bin/
+*.exe
+*.test
+*.out
+
+# local scratch (E2E harness, mock auth, logs)
+/.tmp/
