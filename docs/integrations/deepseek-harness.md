@@ -225,8 +225,63 @@ log file) wrote the activation line:
  "binary_exists":true,"timeout_ms":20000,"min_runes":1,...}
 ```
 
-For a real profile, prefer `install_bundle`; a restart (or HMR where enabled)
-is required for the new row to mount in a long-lived process.
+### 4.3 Installing into the real desktop profile (executed on this machine)
+
+The desktop profile is managed by the Electron application:
+`dsh --profile desktop --dump-config` is rejected with "profile desktop is managed exclusively by
+the Electron application". Install from the workspace, validate the files statically, and reproduce
+the composition in a scratch profile; the desktop app then mounts the row on its next start.
+
+Procedure executed for this machine (paths are examples, substitute your own):
+
+```powershell
+# 0. back up the user profile layer (outside the repository)
+$profile = "$env:USERPROFILE\.dsh\profiles\desktop"
+$backup  = 'D:\05_Code\Crisp\.tmp\dsh-install-<stamp>'
+New-Item -ItemType Directory -Force $backup | Out-Null
+Copy-Item "$profile\package.json" "$profile\cordis.patch.yml" $backup
+
+# 1. install the linked package; the launcher also appends the bundle to
+#    dsh.profile.bundles (no manual package.json editing needed)
+$dsh = 'C:\Users\71408\AppData\Local\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'
+& $dsh plugin --profile desktop add 'D:\05_Code\Crisp\integrations\dsh-plugin-crisp'
+
+# 2. append/override the row config in $profile\cordis.patch.yml
+#    (mode/binaryPath/logFile/envPassthrough; a matching id+name replaces the
+#    bundle's default config completely)
+
+# 3. validate without booting the desktop app: YAML parses, row exists, bundle listed
+python -c "import json,yaml,pathlib; ..."
+
+# 4. reproduce composition/activation in an isolated profile with the same patch
+$env:DSH_HOME = 'D:\05_Code\Crisp\.tmp\dsh-verify-home'
+& $dsh plugin --profile desktop-copy add 'D:\05_Code\Crisp\integrations\dsh-plugin-crisp'
+Copy-Item "$profile\cordis.patch.yml" "$env:DSH_HOME\profiles\desktop-copy\cordis.patch.yml"
+& $dsh --profile desktop-copy --dump-config   # exit 0, row patched by the real patch file
+```
+
+The scratch boot with the real patch wrote the expected activation record (`crisp_quality_gate_active`,
+mode=observe, binary_exists=true, configured logFile), so the Loader accepts the row. The desktop app
+must be restarted (or the plugin manager's HMR path used) before the long-lived process mounts it.
+
+Notes:
+
+- `dsh plugin add` runs pnpm in the profile. pnpm may move packages that are not in the declared
+  dependency tree to `node_modules/.ignored` (housekeeping; files stay on disk). Declared bundles
+  and dependencies are unaffected.
+- Until a Critic is configured (`QUALITY_GATE_BASE_URL/API_KEY/MODEL` in the Harness process
+  environment, or the commented `env:` block in the profile patch), the gate stays fail-open and
+  only records rule-layer/fail-open decisions.
+- Log file for this installation: `C:\Users\71408\.dsh\crisp\quality-gate.jsonl` (created at mount).
+
+Rollback:
+
+```powershell
+Copy-Item "<backup>\package.json" "$profile\package.json" -Force
+Copy-Item "<backup>\cordis.patch.yml" "$profile\cordis.patch.yml" -Force
+# optional: remove the linked package from the profile
+& $dsh plugin --profile desktop remove '@local/crisp-quality-gate'
+```
 
 ---
 
