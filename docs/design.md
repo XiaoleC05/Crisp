@@ -319,10 +319,10 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 
 ## 13. 后续扩展路线
 
-1. Phase 1（当前）：Codex Stop Hook + Go Checker + Critic + 一次重写限制 + 回归测试。
-2. Phase 2：`crisp check-file README.md` 文档检查（Stop Hook 不自动检查磁盘文件）。
-3. Phase 3：DeepSeek Harness（Cordis 插件接入 `llm/stream`；规则可流式，语义需缓存完整回答）。
-4. Phase 4：通用适配层；对完全不支持扩展的 Agent 再考虑本地 API Proxy。
+1. Phase 1（已完成）：Codex Stop Hook + Go Checker + Critic + 一次重写限制 + 回归测试。
+2. Phase 2（已完成）：`crisp check-file` 文档检查（Stop Hook 不自动检查磁盘文件）。
+3. Phase 3（进行中）：DeepSeek Harness（Cordis 插件接入 `llm/stream`；规则可流式，语义需缓存完整回答）。
+4. Phase 4（进行中）：终端 Agent 接入层（Claude Code Stop Hook、opencode 插件）；\n   对完全不支持扩展的 Agent 再考虑本地 API Proxy。
 
 ## 14. CLI
 
@@ -330,4 +330,5 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 | --- | --- |
 | `crisp` / `crisp hook` | Codex Stop Hook 模式：stdin 读 hook JSON，stdout 写决策 JSON |
 | `crisp check-text` | 测试/评测入口：stdin 读原始回答文本，stdout 输出决策摘要 JSON |
+| `crisp check-file` | 文档检查：`crisp check-file [--json] <file> [...]`，`-` 读 stdin；退出码 0 通过 / 1 BLOCK / 2 错误 |
 | `crisp version` | 版本 |

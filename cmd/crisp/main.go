@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/XiaoleC05/Crisp/internal/checker"
 	"github.com/XiaoleC05/Crisp/internal/critic"
 	"github.com/XiaoleC05/Crisp/internal/hook"
 	"github.com/XiaoleC05/Crisp/internal/logger"
@@ -47,6 +47,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHook(log, stdin, stdout)
 	case "check-text":
 		return runCheckText(log, stdin, stdout)
+	case "check-file":
+		return runCheckFile(log, args[1:], stdin, stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "crisp %s\n", version)
 		return 0
@@ -116,63 +118,40 @@ func runHook(log *logger.Logger, stdin io.Reader, stdout io.Writer) (code int) {
 	}
 
 	answer := *in.LastAssistantMessage
-	report := checker.Analyze(answer)
-
 	userMessage := ""
 	if in.TranscriptPath != nil {
 		userMessage = hook.ExtractLastUserMessage(*in.TranscriptPath)
 	}
 
-	policyCfg := policy.Config{
-		Mode:           envString("QUALITY_GATE_MODE", policy.ModeBalanced),
-		MinCriticRunes: envInt("QUALITY_GATE_MIN_CRITIC_RUNES", policy.DefaultMinCriticRunes),
-	}.Normalize()
-
-	criticCalled := false
-	var verdict *critic.Verdict
-	var criticErr error
-	if policy.NeedsCritic(policyCfg, report, answer) {
-		client, err := critic.New(criticConfigFromEnv())
-		if err != nil {
-			criticErr = err
+	outcome := reviewAnswer(ctx, answer, userMessage)
+	if outcome.CriticErr != nil {
+		if errors.Is(outcome.CriticErr, critic.ErrNotConfigured) {
 			log.Warn("critic_unavailable", "critic is not usable; failing open",
-				mergeFields(base, map[string]any{"error": err.Error()}))
+				mergeFields(base, map[string]any{"error": outcome.CriticErr.Error()}))
 		} else {
-			criticCalled = true
-			v, err := client.Review(ctx, critic.Input{
-				Answer:       answer,
-				UserMessage:  userMessage,
-				RuleFindings: report.Findings,
-			})
-			if err != nil {
-				criticErr = err
-				log.Warn("critic_failed", "critic call failed; failing open",
-					mergeFields(base, map[string]any{"error": err.Error()}))
-			} else {
-				verdict = &v
-			}
+			log.Warn("critic_failed", "critic call failed; failing open",
+				mergeFields(base, map[string]any{"error": outcome.CriticErr.Error()}))
 		}
 	}
 
-	decision := policy.Decide(report, verdict, criticErr, criticCalled)
 	log.Info("quality_check", mergeFields(base, map[string]any{
-		"mode":              policyCfg.Mode,
-		"decision":          decisionName(decision),
-		"reason_type":       decision.ReasonType,
-		"rule_types":        report.Types(),
-		"rule_material":     report.HasMaterial(),
-		"answer_runes":      report.Stats.Runes,
-		"natural_runes":     report.Stats.NaturalRunes,
-		"critic_called":     criticCalled,
-		"critic_latency_ms": verdictLatencyMS(verdict),
-		"critic_tokens":     verdictTokens(verdict),
-		"fail_open":         decision.FailOpen,
+		"mode":              outcome.Mode,
+		"decision":          decisionName(outcome.Decision),
+		"reason_type":       outcome.Decision.ReasonType,
+		"rule_types":        outcome.Report.Types(),
+		"rule_material":     outcome.Report.HasMaterial(),
+		"answer_runes":      outcome.Report.Stats.Runes,
+		"natural_runes":     outcome.Report.Stats.NaturalRunes,
+		"critic_called":     outcome.CriticCalled,
+		"critic_latency_ms": verdictLatencyMS(outcome.Verdict),
+		"critic_tokens":     verdictTokens(outcome.Verdict),
+		"fail_open":         outcome.Decision.FailOpen,
 		"elapsed_ms":        time.Since(started).Milliseconds(),
 	}))
 
 	outputWritten = true
-	if decision.Block {
-		if err := hook.WriteBlock(stdout, decision.Reason); err != nil {
+	if outcome.Decision.Block {
+		if err := hook.WriteBlock(stdout, outcome.Decision.Reason); err != nil {
 			log.Error("hook_output_failed", "failed to write block decision", err, nil)
 		}
 		return 0
@@ -183,7 +162,6 @@ func runHook(log *logger.Logger, stdin io.Reader, stdout io.Writer) (code int) {
 // runCheckText runs the same pipeline over raw answer text from stdin. It is a
 // testing/evaluation entry point, not part of the Stop hook contract.
 func runCheckText(log *logger.Logger, stdin io.Reader, stdout io.Writer) int {
-	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(),
 		envDuration("QUALITY_GATE_TOTAL_TIMEOUT_MS", defaultTotalTimeout))
 	defer cancel()
@@ -193,43 +171,8 @@ func runCheckText(log *logger.Logger, stdin io.Reader, stdout io.Writer) int {
 		writeJSON(stdout, map[string]any{"decision": "pass", "fail_open": true, "error": "read stdin failed"})
 		return 0
 	}
-	answer := string(data)
-	report := checker.Analyze(answer)
-	policyCfg := policy.Config{
-		Mode:           envString("QUALITY_GATE_MODE", policy.ModeBalanced),
-		MinCriticRunes: envInt("QUALITY_GATE_MIN_CRITIC_RUNES", policy.DefaultMinCriticRunes),
-	}.Normalize()
-
-	criticCalled := false
-	var verdict *critic.Verdict
-	var criticErr error
-	if policy.NeedsCritic(policyCfg, report, answer) {
-		client, err := critic.New(criticConfigFromEnv())
-		if err != nil {
-			criticErr = err
-		} else {
-			criticCalled = true
-			v, err := client.Review(ctx, critic.Input{Answer: answer, RuleFindings: report.Findings})
-			if err != nil {
-				criticErr = err
-			} else {
-				verdict = &v
-			}
-		}
-	}
-	decision := policy.Decide(report, verdict, criticErr, criticCalled)
-	writeJSON(stdout, map[string]any{
-		"decision":          decisionName(decision),
-		"reason_type":       decision.ReasonType,
-		"rule_types":        report.Types(),
-		"critic_called":     criticCalled,
-		"fail_open":         decision.FailOpen,
-		"answer_runes":      report.Stats.Runes,
-		"natural_runes":     report.Stats.NaturalRunes,
-		"critic_latency_ms": verdictLatencyMS(verdict),
-		"critic_tokens":     verdictTokens(verdict),
-		"elapsed_ms":        time.Since(started).Milliseconds(),
-	})
+	outcome := reviewAnswer(ctx, string(data), "")
+	writeJSON(stdout, outcome.summaryFields())
 	return 0
 }
 
@@ -322,5 +265,5 @@ func envDuration(key string, def time.Duration) time.Duration {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, "crisp - agent output quality gate\n\nUsage:\n  crisp                 Run as a Codex Stop hook (JSON on stdin, JSON on stdout)\n  crisp hook            Same as above\n  crisp check-text      Run the quality pipeline over raw text on stdin (testing)\n  crisp version         Print the version\n\nEnvironment:\n  QUALITY_GATE_BASE_URL, QUALITY_GATE_API_KEY, QUALITY_GATE_MODEL\n  QUALITY_GATE_MODE=balanced|economy\n")
+	fmt.Fprint(w, "crisp - agent output quality gate\n\nUsage:\n  crisp                 Run as a Codex Stop hook (JSON on stdin, JSON on stdout)\n  crisp hook            Same as above\n  crisp check-text      Run the quality pipeline over raw text on stdin (testing)\n  crisp check-file      Check one or more text/Markdown files: crisp check-file [--json] <file> [...] (\"-\" reads stdin)\n  crisp version         Print the version\n\nEnvironment:\n  QUALITY_GATE_BASE_URL, QUALITY_GATE_API_KEY, QUALITY_GATE_MODEL\n  QUALITY_GATE_MODE=balanced|economy\n")
 }

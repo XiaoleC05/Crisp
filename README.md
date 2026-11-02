@@ -116,7 +116,30 @@ powershell -ExecutionPolicy Bypass -File scripts/install-codex-hook.ps1
 '{"session_id":"s","turn_id":"t","stop_hook_active":false,"last_assistant_message":"这是一段足够长的正常回答。"}' | .\bin\crisp.exe
 
 # 超时字段验证见 docs/codex-e2e.md
-```
+`~
+
+## 文档检查（Phase 2）
+
+Stop Hook 只检查 Agent 的最终回答；对磁盘上生成或已有的 Markdown、文本文件，可以用同一条
+Checker + Critic + 决策流水线显式检查：
+
+`~powershell
+.\bin\crisp.exe check-file README.md
+.\bin\crisp.exe check-file --json docs/design.md docs/eval-report.md
+Get-Content README.md -Raw | .\bin\crisp.exe check-file -
+`~
+
+人读模式输出示例：
+
+`~text
+README.md: PASS (reason_type=critic_pass; rules=length_signal; critic=pass; runes=5430; 812ms)
+checked=1 blocked=0 fail_open=0 errors=0
+`~
+
+`--json` 输出单个对象 `{"files":[...],"summary":{...}}`。退出码：`0` 全部通过（含
+fail-open）、`1` 至少一个文件判定 BLOCK、`2` 用法错误或存在无法读取的文件（读取失败的
+文件按 fail-open 记录，其他文件继续检查）。每个文件最多读取 4 MiB，超限按读取失败处理。
+未配置 Critic 时与 Hook 模式一致，只做规则检查并 fail-open。
 
 ## 配置项
 
@@ -199,13 +222,13 @@ docs/                 设计规格、E2E 记录、评测报告
 ## 已知限制
 
 - 目前只支持 Codex CLI Stop Hook；其他 Agent 在后续 Phase 接入。
-- Stop Hook 不会自动检查磁盘上生成的文件，文件检查是 Phase 2 的 `crisp check-file`。
+- Stop Hook 不会自动检查磁盘上生成的文件；需要显式运行 `crisp check-file`（Phase 2 已实现）。
 - 每个 Turn 最多触发一次完整重写；重写后若仍有问题，本 Turn 不再拦截。
 - 未配置 Critic 时只做规则检查并 fail-open（不拦截）。
 
 ## Roadmap
 
-1. Phase 1（当前）：Codex Stop Hook + Go Checker + LLM Critic + 一次重写限制 + 回归测试。
-2. Phase 2：`crisp check-file README.md` 文档检查。
-3. Phase 3：DeepSeek Harness（Cordis 插件接入 `llm/stream`）。
-4. Phase 4：通用适配层，最后才考虑本地 API Proxy。
+1. Phase 1（已完成）：Codex Stop Hook + Go Checker + LLM Critic + 一次重写限制 + 回归测试。
+2. Phase 2（已完成）：`crisp check-file` 文档检查。
+3. Phase 3（进行中）：DeepSeek Harness（Cordis 插件接入 `llm/stream`）。
+4. Phase 4（进行中）：终端 Agent 接入层（Codex / Claude Code / opencode）；对不支持扩展的 Agent 再考虑本地 API Proxy。
