@@ -233,6 +233,7 @@ Codex 的 `stop_hook_active` 表示此前已因 Stop Hook 触发过续写，平�
 | Critic 模型 | 空 | `QUALITY_GATE_MODEL` |
 | 模式 | balanced | `QUALITY_GATE_MODE` |
 | 最小 Critic 字数 | 120 | `QUALITY_GATE_MIN_CRITIC_RUNES` |
+| Critic 请求额外字段 | 空 | `QUALITY_GATE_EXTRA_BODY_JSON`（JSON 对象，合并进请求体；如关闭思考模式） |
 
 API Key 不写入仓库、不写入日志。
 

@@ -12,6 +12,9 @@
   OpenAI-compatible endpoint 或 API Key；确定性规则仍由本地 `crisp` 二进制完成。
   外部 HTTP Critic 仍为默认模式。observe 模式下审查异步执行、不增加对话延迟；guard 模式在
   turn 结束前等待判定以排队一次重写。见 [docs/integrations/deepseek-harness.md](docs/integrations/deepseek-harness.md)。
+- Critic 新增 ~~QUALITY_GATE_EXTRA_BODY_JSON~~：把 provider 专有字段合并进请求体，例如用
+  ~~{"thinking":{"type":"disabled"}}~~ 关闭 DeepSeek-V4.1-Flash 的思考模式。已用真实官方 API
+  验证：重复结论样本返回 block（semantic_duplicate，约 1.4s），正常技术样本返回 pass（约 0.6s）。
 
 ## [0.1.0] - 2026-11-02
 

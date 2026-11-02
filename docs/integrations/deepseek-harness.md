@@ -340,6 +340,23 @@ rules and calls the OpenAI-compatible endpoint configured with
 `QUALITY_GATE_BASE_URL` / `QUALITY_GATE_API_KEY` / `QUALITY_GATE_MODEL`. This is
 the historical behavior; no config change is needed for existing deployments.
 
+Provider-specific request fields can be merged into the request body with
+`QUALITY_GATE_EXTRA_BODY_JSON` (a JSON object validated at startup; invalid JSON
+makes the critic unconfigured, so reviews fail open). For DeepSeek-V4.1-Flash this
+disables thinking mode:
+
+```yaml
+    env:
+      QUALITY_GATE_BASE_URL: 'https://api.deepseek.com/v1'
+      QUALITY_GATE_MODEL: 'deepseek-flash'
+      QUALITY_GATE_API_KEY: 'sk-...'
+      QUALITY_GATE_EXTRA_BODY_JSON: '{"thinking":{"type":"disabled"}}'
+```
+
+Verified against the real official DeepSeek API: a duplicate-conclusion sample was
+blocked (`semantic_duplicate`, ~1.4 s, ~1.2k tokens) and a normal technical
+sample passed (~0.6 s), with no reasoning output when thinking was disabled.
+
 **Harness critic (`critic: harness`, opt-in).** The plugin asks the signed-in
 DeepSeek Harness model through `ctx.llm.stream(...)`; no external endpoint or API
 key is needed, and account authentication is resolved by the Harness. The

@@ -179,6 +179,7 @@ Push-Location integrations/dsh-plugin-crisp; node --test; Pop-Location
 | 项 | 默认 | 环境变量 / 字段 |
 | --- | --- | --- |
 | Critic 单次 HTTP 超时 | 8s | `QUALITY_GATE_CRITIC_TIMEOUT_MS` |
+| Critic 请求额外字段 | 空 | `QUALITY_GATE_EXTRA_BODY_JSON`（如 `{"thinking":{"type":"disabled"}}`） |
 | Crisp 进程总预算 | 25s | `QUALITY_GATE_TOTAL_TIMEOUT_MS` |
 | 宿主 Hook 截止时间 | 30s | Codex `hooks.json` `timeout` / Claude `timeout` |
 | 插件子进程超时 | 30s | DSH/opencode `timeoutMs` |

@@ -83,6 +83,7 @@ Critic 使用 OpenAI-compatible Chat Completions 接口（`POST {base_url}/chat/
 | `QUALITY_GATE_MODE` | `balanced` | `balanced`（默认）或 `economy` |
 | `QUALITY_GATE_CRITIC_TIMEOUT_MS` | 8000 | 单次 Critic HTTP 超时 |
 | `QUALITY_GATE_MIN_CRITIC_RUNES` | 120 | 短于该自然语言长度的回答默认不送 Critic |
+| `QUALITY_GATE_EXTRA_BODY_JSON` | 空 | 可选：合并进 Critic 请求体的 JSON 对象（如关闭思考模式） |
 | `QUALITY_GATE_TOTAL_TIMEOUT_MS` | 25000 | crisp 进程总预算，必须小于宿主钩子 timeout |
 
 **未配置 Critic 时，整个门禁只跑确定性规则并 fail-open（永不拦截）。** 生产使用必须配置，

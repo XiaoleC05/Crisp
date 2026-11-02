@@ -22,13 +22,23 @@ const (
 
 const passJSON = "{\"decision\":\"pass\",\"severity\":\"none\",\"issues\":[]}"
 
+type capturedChatBody struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+	Temperature float64 `json:"temperature"`
+	Stream      bool    `json:"stream"`
+}
+
 type capturedRequest struct {
 	path        string
 	method      string
 	auth        string
 	contentType string
 	rawBody     []byte
-	body        chatRequest
+	body        capturedChatBody
 }
 
 // newChatServer starts a hermetic chat-completions mock. A non-nil capture
@@ -40,7 +50,7 @@ func newChatServer(t *testing.T, capture chan<- capturedRequest, respond func(ht
 		if err != nil {
 			t.Errorf("mock server: read request body: %v", err)
 		}
-		var body chatRequest
+		var body capturedChatBody
 		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Errorf("mock server: decode request body: %v", err)
 		}

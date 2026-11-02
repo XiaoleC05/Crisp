@@ -141,6 +141,7 @@ host launches hooks, or in a settings `env` block where supported):
 | `QUALITY_GATE_CRITIC_TIMEOUT_MS` | 8000 | Per-critic-request HTTP timeout. |
 | `QUALITY_GATE_TOTAL_TIMEOUT_MS` | 25000 | Whole-process budget. **Must stay below the host hook timeout.** |
 | `QUALITY_GATE_MIN_CRITIC_RUNES` | 120 | Shorter natural-language answers skip the critic unless rules fired. |
+| `QUALITY_GATE_EXTRA_BODY_JSON` | empty | Optional JSON object merged into the critic request body (provider-specific controls, e.g. `{"thinking":{"type":"disabled"}}`). Invalid JSON disables the critic (fail-open). |
 
 Without a configured critic the gate only runs the deterministic rules and
 **fails open** (it never blocks), so a production adapter install must configure

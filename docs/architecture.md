@@ -308,6 +308,7 @@ evidence/detail**）→ 回答全文（`<answer>` 包裹）。`<user_message>`/`
 | 宿主 Hook 截止时间 | 30s | Codex `hooks.json` 的 `timeout`（秒）/ Claude Code 的 `timeout` | Codex 上是"结果截止时间"：超时后输出被丢弃；实测不会终止 Hook 进程（见第 7.1 节） |
 | Crisp 进程总预算 | 25s | `QUALITY_GATE_TOTAL_TIMEOUT_MS` | 覆盖整条审查流水线；必须小于宿主截止时间 |
 | Critic 单次 HTTP 超时 | 8s | `QUALITY_GATE_CRITIC_TIMEOUT_MS` | 必须小于进程总预算 |
+| Critic 请求额外字段 | 空 | `QUALITY_GATE_EXTRA_BODY_JSON` | 合并进请求体的 JSON 对象（provider 专有参数，如关闭思考模式） |
 | DSH 插件子进程超时 | 30s（钳制 1–120s） | `timeoutMs` | 到点 `child.kill()`；应高于 Crisp 自身总预算 |
 | opencode 插件子进程超时 | 30s（钳制 1–120s） | `timeoutMs` | 同上 |
 | `check-file` | 25s/文件 | `QUALITY_GATE_TOTAL_TIMEOUT_MS` | 每个文件独立的总预算 |

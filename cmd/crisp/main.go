@@ -178,11 +178,12 @@ func runCheckText(log *logger.Logger, stdin io.Reader, stdout io.Writer) int {
 
 func criticConfigFromEnv() critic.Config {
 	return critic.Config{
-		BaseURL:     strings.TrimSpace(os.Getenv("QUALITY_GATE_BASE_URL")),
-		APIKey:      strings.TrimSpace(os.Getenv("QUALITY_GATE_API_KEY")),
-		Model:       strings.TrimSpace(os.Getenv("QUALITY_GATE_MODEL")),
-		Timeout:     envDuration("QUALITY_GATE_CRITIC_TIMEOUT_MS", defaultCriticTimeout),
-		Temperature: 0,
+		BaseURL:       strings.TrimSpace(os.Getenv("QUALITY_GATE_BASE_URL")),
+		APIKey:        strings.TrimSpace(os.Getenv("QUALITY_GATE_API_KEY")),
+		Model:         strings.TrimSpace(os.Getenv("QUALITY_GATE_MODEL")),
+		Timeout:       envDuration("QUALITY_GATE_CRITIC_TIMEOUT_MS", defaultCriticTimeout),
+		Temperature:   0,
+		ExtraBodyJSON: strings.TrimSpace(os.Getenv("QUALITY_GATE_EXTRA_BODY_JSON")),
 	}
 }
 
@@ -265,5 +266,5 @@ func envDuration(key string, def time.Duration) time.Duration {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, "crisp - agent output quality gate\n\nUsage:\n  crisp                 Run as a Stop hook (Codex CLI / Claude Code; JSON on stdin, JSON on stdout)\n  crisp hook            Same as above\n  crisp check-text      Run the quality pipeline over raw text on stdin (testing)\n  crisp check-file      Check one or more text/Markdown files: crisp check-file [--json] <file> [...] (\"-\" reads stdin)\n  crisp version         Print the version\n\nEnvironment:\n  QUALITY_GATE_BASE_URL, QUALITY_GATE_API_KEY, QUALITY_GATE_MODEL  (critic endpoint; unset = fail-open)\n  QUALITY_GATE_MODE=balanced|economy\n  QUALITY_GATE_CRITIC_TIMEOUT_MS=8000\n  QUALITY_GATE_MIN_CRITIC_RUNES=120\n  QUALITY_GATE_TOTAL_TIMEOUT_MS=25000\n")
+	fmt.Fprint(w, "crisp - agent output quality gate\n\nUsage:\n  crisp                 Run as a Stop hook (Codex CLI / Claude Code; JSON on stdin, JSON on stdout)\n  crisp hook            Same as above\n  crisp check-text      Run the quality pipeline over raw text on stdin (testing)\n  crisp check-file      Check one or more text/Markdown files: crisp check-file [--json] <file> [...] (\"-\" reads stdin)\n  crisp version         Print the version\n\nEnvironment:\n  QUALITY_GATE_BASE_URL, QUALITY_GATE_API_KEY, QUALITY_GATE_MODEL  (critic endpoint; unset = fail-open)\n  QUALITY_GATE_MODE=balanced|economy\n  QUALITY_GATE_CRITIC_TIMEOUT_MS=8000\n  QUALITY_GATE_MIN_CRITIC_RUNES=120\n  QUALITY_GATE_TOTAL_TIMEOUT_MS=25000\n  QUALITY_GATE_EXTRA_BODY_JSON={\"thinking\":{\"type\":\"disabled\"}}  (optional JSON merged into the critic request body)\n")
 }

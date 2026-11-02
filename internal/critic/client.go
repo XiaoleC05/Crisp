@@ -40,6 +40,13 @@ type Config struct {
 	Model       string
 	Timeout     time.Duration
 	Temperature float64
+
+	// ExtraBodyJSON is an optional JSON object merged into the request body.
+	// It exists for provider-specific controls that are not part of the
+	// OpenAI-compatible schema, for example {"thinking":{"type":"disabled"}}
+	// or {"reasoning_effort":"none"}. The object is validated at construction
+	// time; invalid JSON makes the critic unconfigured (callers fail open).
+	ExtraBodyJSON string
 }
 
 // Validate fails when required settings are missing. APIKey is optional for
@@ -101,11 +108,18 @@ func New(cfg Config) (Client, error) {
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
+	var extraBody map[string]any
+	if raw := strings.TrimSpace(cfg.ExtraBodyJSON); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &extraBody); err != nil {
+			return nil, fmt.Errorf("%w: QUALITY_GATE_EXTRA_BODY_JSON is not a JSON object: %v", ErrNotConfigured, err)
+		}
+	}
 	client := &httpClient{
 		endpoint:    cfg.endpoint(),
 		model:       strings.TrimSpace(cfg.Model),
 		apiKey:      strings.TrimSpace(cfg.APIKey),
 		temperature: cfg.Temperature,
+		extraBody:   extraBody,
 		timeout:     timeout,
 		http: &http.Client{
 			Timeout: timeout,
@@ -126,13 +140,9 @@ type chatMessage struct {
 }
 
 // chatRequest is the OpenAI-compatible chat completion payload. Streaming is
-// explicitly disabled and no retries are performed.
-type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	Stream      bool          `json:"stream"`
-}
+// explicitly disabled and no retries are performed. It is a map so the
+// provider-specific ExtraBody fields can be merged in without a schema change.
+type chatRequest map[string]any
 
 // chatResponse is the subset of the OpenAI-compatible completion response the
 // critic relies on. Unknown fields are ignored on purpose: providers add them.
@@ -164,6 +174,7 @@ type httpClient struct {
 	model       string
 	apiKey      string
 	temperature float64
+	extraBody   map[string]any
 	timeout     time.Duration
 	http        *http.Client
 }
@@ -180,12 +191,18 @@ func (c *httpClient) Review(ctx context.Context, in Input) (Verdict, error) {
 	}
 	system, user := BuildPrompt(in)
 	payload := chatRequest{
-		Model: c.model,
-		Messages: []chatMessage{
+		"model": c.model,
+		"messages": []chatMessage{
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		Temperature: c.temperature,
+		"temperature": c.temperature,
+		"stream":      false,
+	}
+	// Provider-specific controls (e.g. disabling thinking mode) are merged
+	// last so they can override the defaults for providers that need it.
+	for key, value := range c.extraBody {
+		payload[key] = value
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

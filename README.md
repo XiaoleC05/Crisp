@@ -135,6 +135,7 @@ stdout: {} 放行     或     {"decision":"block","reason":"..."} 要求完整�
 | `QUALITY_GATE_MODE` | `balanced` | `balanced` 或 `economy` |
 | `QUALITY_GATE_CRITIC_TIMEOUT_MS` | 8000 | Critic HTTP 超时 |
 | `QUALITY_GATE_MIN_CRITIC_RUNES` | 120 | 短于该自然语言长度的回答不调用 Critic |
+| `QUALITY_GATE_EXTRA_BODY_JSON` | 空 | 可选：合并进 Critic 请求体的 JSON 对象（如 `{"thinking":{"type":"disabled"}}` 关闭思考模式） |
 | `QUALITY_GATE_TOTAL_TIMEOUT_MS` | 25000 | 单次 Hook 进程总预算（应小于宿主 timeout） |
 
 宿主侧还有各自配置（hooks.json 的 `timeout`、插件 `mode`/`timeoutMs`/`rewrite` 等），见接入文档。
