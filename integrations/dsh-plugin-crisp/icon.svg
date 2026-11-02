@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Crisp quality gate">
+  <defs>
+    <linearGradient id="crispGate" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 56 13v17c0 14.2-9.9 25.6-24 30C17.9 55.6 8 44.2 8 30V13L32 4Z" fill="url(#crispGate)"/>
+  <path d="M32 10 50 17v13c0 10.9-7.3 19.9-18 23.8C21.3 49.9 14 40.9 14 30V17l18-7Z" fill="#0b3f3a" opacity=".35"/>
+  <path d="m21 32 7.4 7.6L44 25" fill="none" stroke="#f0fdfa" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

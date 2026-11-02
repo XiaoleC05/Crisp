@@ -1,0 +1,38 @@
+# Crisp quality gate — a Host-only plugin bundle row.
+#
+# Install this bundle into a profile (see docs/dsh-integration.md) and the row
+# below is inserted into that profile's effective composition. Change the
+# config here or override it from the profile's own cordis.patch.yml:
+#
+#   - id: crisp-quality-gate
+#     config:
+#       mode: guard
+#
+# mode:
+#   observe (default) — check and log only; never changes the conversation.
+#   guard            — additionally queue exactly ONE user-role followup asking
+#                      for a complete rewrite after a turn whose delivered
+#                      answer was blocked by Crisp. Post-delivery, never a
+#                      pre-delivery block.
+#
+# binaryPath defaults to the checkout's bin/crisp(.exe) when this package runs
+# from the Crisp repository, then to CRISP_BIN, then to "crisp" on PATH.
+# logFile: "" logs the structured lines to stderr; set a path to append JSONL.
+# envPassthrough lists variables copied from the Harness environment into the
+# spawned Crisp process (QUALITY_GATE_* critic settings live there).
+- insert:
+    - id: crisp-quality-gate
+      name: '@local/crisp-quality-gate'
+      config:
+        mode: observe
+        timeoutMs: 30000
+        minRunes: 40
+        logFile: ''
+        envPassthrough:
+          - QUALITY_GATE_BASE_URL
+          - QUALITY_GATE_API_KEY
+          - QUALITY_GATE_MODEL
+          - QUALITY_GATE_MODE
+          - QUALITY_GATE_CRITIC_TIMEOUT_MS
+          - QUALITY_GATE_MIN_CRITIC_RUNES
+          - QUALITY_GATE_TOTAL_TIMEOUT_MS
