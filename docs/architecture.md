@@ -75,9 +75,11 @@ stdout: {} 放行            {"decision":"block","reason":"..."} 要求完整重
 | `integrations/dsh-plugin-crisp/` | DeepSeek Harness Cordis Host 插件（`llm/stream`，observe/guard） | `index.js` `apply()`、`lib/gate.js`、`lib/crisp.js` |
 | `integrations/opencode-crisp/` | opencode 插件（事件钩子 + 一次重写 followup） | `index.js` 唯一默认导出、`lib/hooks.js`、`lib/crisp.js` |
 | `testdata/cases/` | 30 条回归样本：`positive.jsonl` 20 条问题回答 + `negative.jsonl` 10 条正常回答 | `go test ./cmd/crisp -run TestRuleEvaluation` |
-| `test/e2e/` | 真实 CLI E2E 与 mock：`hookreplay`、`hooktap`、`mockcritic`、`mockprovider`、`mockanthropic` | 见 [codex-cli.md](integrations/codex-cli.md) 第 8 节 |
-| `scripts/` | 构建、Hook 安装、真实 E2E 脚本 | `build.ps1`、`install-codex-hook.ps1`、`install-claude-hook.ps1`、`e2e-codex.ps1`、`e2e-claude.ps1` |
+| `test/e2e/` | 真实 CLI E2E 与 mock：`hookreplay`、`hooktap`、`mockcritic`、`mockprovider`、`mockanthropic`、`mockmessages` | 见 [codex-cli.md](integrations/codex-cli.md) 第 8 节 |
+| `scripts/` | 构建、Hook 安装、真实 E2E 脚本 | `build.ps1`、`install-codex-hook.ps1`、`install-claude-hook.ps1`、`e2e-codex.ps1`、`e2e-claude.ps1`、`e2e-dsh.ps1` |
 | `.codex/`、`.claude/` | 项目级 Hook 配置（检入仓库；`*.example.json` 为模板） | `hooks.json` / `settings.json` |
+
+`test/docscheck`（`go run ./test/docscheck`）检查全部文档的相对链接，本仓库当前 125 条链接 0 处失效。
 
 ```text
                      ┌───────────────────────────────────────┐
