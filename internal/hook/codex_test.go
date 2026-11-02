@@ -84,8 +84,15 @@ func TestParseRejectsBadInput(t *testing.T) {
 func TestValidateWarnings(t *testing.T) {
 	var zero Input
 	warnings := zero.Validate()
-	if len(warnings) != 4 {
-		t.Fatalf("expected 4 warnings for zero input, got %v", warnings)
+	// turn_id is a Codex extension, not a shared-protocol requirement: Claude
+	// Code does not send it, so it is not reported as an anomaly.
+	if len(warnings) != 3 {
+		t.Fatalf("expected 3 warnings for zero input, got %v", warnings)
+	}
+	for _, w := range warnings {
+		if w == "missing turn_id" {
+			t.Fatalf("turn_id must not be reported as a protocol anomaly, got %v", warnings)
+		}
 	}
 	full := Input{
 		SessionID:            "s",

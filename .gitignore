@@ -12,3 +12,8 @@ test/coverage*
 /coverage*
 /*.coverprofile
 
+# plugin integration dependencies (Node)
+node_modules/
+*.log
+
+

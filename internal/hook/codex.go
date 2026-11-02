@@ -1,5 +1,11 @@
-// Package hook parses the Codex Stop hook protocol and writes the JSON
-// response that Codex consumes.
+// Package hook parses the Stop hook protocol and writes the JSON response
+// that the agent consumes.
+//
+// The parser targets the subset shared by Codex CLI and Claude Code: both send
+// one JSON object on stdin with session_id, transcript_path, stop_hook_active
+// and last_assistant_message, and both accept {} for pass and
+// {"decision":"block","reason":"..."} to request a rewrite. Unknown fields are
+// ignored so either agent can add protocol fields without breaking the gate.
 package hook
 
 import (
@@ -22,8 +28,10 @@ const (
 	MaxUserMessageRunes = 2000
 )
 
-// Input is the subset of the Codex Stop hook payload the gate relies on.
-// Unknown fields are ignored on purpose: Codex adds fields over time.
+// Input is the subset of the shared Stop hook payload the gate relies on.
+// Unknown fields are ignored on purpose: Codex appends protocol fields over
+// time and Claude Code carries many extra fields (cwd, permission_mode, model,
+// background_tasks, ...) that the gate does not need.
 type Input struct {
 	SessionID            string  `json:"session_id"`
 	TurnID               string  `json:"turn_id"`
@@ -63,13 +71,14 @@ func Parse(r io.Reader) (Input, error) {
 }
 
 // Validate lists protocol anomalies. They are logged but never block.
+//
+// turn_id is deliberately not validated: it is a Codex extension (Claude Code
+// never sends it), and it is only used for log correlation, so its absence is
+// not an anomaly worth logging on every Claude Stop.
 func (in Input) Validate() []string {
 	var warnings []string
 	if in.SessionID == "" {
 		warnings = append(warnings, "missing session_id")
-	}
-	if in.TurnID == "" {
-		warnings = append(warnings, "missing turn_id")
 	}
 	if in.StopHookActive == nil {
 		warnings = append(warnings, "missing stop_hook_active")
@@ -80,8 +89,8 @@ func (in Input) Validate() []string {
 	return warnings
 }
 
-// BlockOutput is the only non-pass response Codex accepts: it asks for a full
-// regeneration of the answer.
+// BlockOutput is the only non-pass response the agents accept: it asks for a
+// full regeneration of the answer (Codex and Claude Code share this shape).
 type BlockOutput struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason"`
@@ -145,11 +154,71 @@ func ExtractLastUserMessage(path string) string {
 		if err := json.Unmarshal(line, &v); err != nil {
 			continue
 		}
+		if record, ok := v.(map[string]any); ok && isClaudeNonPromptRecord(record) {
+			continue
+		}
 		if msg := findUserText(v, 0); msg != "" {
 			return truncateRunes(strings.TrimSpace(msg), MaxUserMessageRunes)
 		}
 	}
 	return ""
+}
+
+// isClaudeNonPromptRecord reports whether a transcript line is a Claude Code
+// "user" record that is not a real prompt. Claude transcripts wrap tool
+// results, sidechain activity and CLI-generated meta messages in records whose
+// top-level type is "user"; forwarding their content would replace the user's
+// question with tool output in the critic prompt.
+func isClaudeNonPromptRecord(record map[string]any) bool {
+	typ, _ := record["type"].(string)
+	if !strings.EqualFold(typ, "user") {
+		return false
+	}
+	if meta, _ := record["isMeta"].(bool); meta {
+		return true
+	}
+	if sidechain, _ := record["isSidechain"].(bool); sidechain {
+		return true
+	}
+	if _, ok := record["toolUseResult"]; ok {
+		return true
+	}
+	msg, ok := record["message"].(map[string]any)
+	if !ok {
+		return false
+	}
+	content, ok := msg["content"]
+	if !ok {
+		return false
+	}
+	return !contentHasText(content)
+}
+
+// contentHasText reports whether a Claude message content value carries a
+// human-visible text block. Tool-result-only content does not.
+func contentHasText(content any) bool {
+	switch t := content.(type) {
+	case string:
+		return strings.TrimSpace(t) != ""
+	case []any:
+		for _, block := range t {
+			switch b := block.(type) {
+			case string:
+				if strings.TrimSpace(b) != "" {
+					return true
+				}
+			case map[string]any:
+				typ, _ := b["type"].(string)
+				if typ != "" && typ != "text" && typ != "output_text" {
+					continue
+				}
+				if s, _ := b["text"].(string); strings.TrimSpace(s) != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 const maxExtractDepth = 6
