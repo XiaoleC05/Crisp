@@ -5,11 +5,16 @@
 Crisp 是一个独立的 Go 输出质量检查器。它在 Agent 完成回答、交付用户之前检查回答质量，
 只拦截存在明确实质问题的回答，其他情况一律放行。
 
-第一版接入方式：Codex CLI Stop Hook。质量检查核心与 Agent 框架解耦，后续扩展接入层。
+检查核心与 Agent 框架解耦；目前接入：
+
+- Codex CLI / Claude Code：Stop Hook，可在交付前 block 并触发完整重写（`stop_hook_active` 保证每 Turn 一次）。
+- DeepSeek Harness：Cordis Host 插件（`llm/stream`），默认 observe；guard 模式后置一次重写 followup。
+- opencode：插件事件钩子，observe + toast + 默认一次重写 followup。
+- 其他 Hook Agent：通用 stdin/stdout 协议（docs/integrations/generic-hook-protocol.md）。
 
 - 二进制：`crisp`
 - Go 模块：`github.com/XiaoleC05/Crisp`
-- 本机验证用 Codex CLI：`0.145.0-alpha.18`（路径见 test/e2e 报告，需 E2E 验证 hooks 支持）
+- 已验证宿主：Codex CLI 0.145.0-alpha.18、Claude Code 2.1.312、本机安装的 DeepSeek Harness、opencode 1.18.18（证据见 docs/ 下各接入文档）。
 
 ## 2. 要解决的问题
 
@@ -50,18 +55,26 @@ crisp hook （cmd/crisp/main.go）
 
 | 路径 | 职责 | 负责人 |
 | --- | --- | --- |
-| `cmd/crisp/main.go` | 进程入口、Hook 流程编排、env 配置、超时、fail-open、check-text 测试入口 | Lead |
-| `internal/hook/codex.go` | Hook 输入解析、输出 JSON、transcript 最近用户消息提取（限读） | Lead |
+| `cmd/crisp/` | 进程入口：Stop Hook、check-text、check-file；env 配置、超时、fail-open | Lead |
+| `internal/hook/` | Stop Hook 协议解析与输出（Codex + Claude Code 共享子集）、transcript 最近用户消息提取（限读） | Lead / claude-adapter |
 | `internal/checker/` | 确定性检查：重复段落/句子、无效开场白/结束语、结构异常、字数信号 | checker-dev |
 | `internal/critic/` | OpenAI-compatible 客户端、prompt、响应 schema 校验 | critic-dev |
 | `internal/policy/decision.go` | 是否需要 Critic、最终决策、重写指令 | Lead |
 | `internal/logger/logger.go` | stderr 结构化 JSON 日志、敏感字段过滤 | Lead |
-| `testdata/cases/` | 30 条回归样本（positive 20 / negative 10） | samples-dev |
-| `test/e2e/`、`scripts/`、`.codex/` | 真实 Codex CLI E2E、超时验证、hook 安装脚本 | codex-e2e |
+| `integrations/dsh-plugin-crisp/` | DeepSeek Harness Cordis Host 插件 bundle（llm/stream，observe/guard） | dsh-plugin-dev |
+| `integrations/opencode-crisp/` | opencode 插件（事件钩子、一次重写 guard） | opencode-dev |
+| `testdata/cases/` | 30 条回归样本（positive 20 / negative 10），另有 go test 评测 | samples-dev |
+| `test/e2e/`、`scripts/`、`.codex/`、`.claude/` | Codex / Claude 真实 CLI E2E、超时验证、Hook 安装脚本 | codex-e2e / claude-adapter |
 
 约束：只使用 Go 标准库，不新增第三方依赖；不修改他人负责目录；只有 Lead 执行 git 操作。
 
-## 6. Codex Stop Hook 协议
+## 6. Stop Hook 协议（Codex CLI / Claude Code）
+
+Codex CLI 与 Claude Code 共享同一套 Stop Hook 输入/输出形状：stdin 一个 JSON 对象，stdout
+`{}`（放行）或 `{"decision":"block","reason":"..."}`（要求完整重写）；两者都提供
+`stop_hook_active`，用于保证每个 Turn 最多重写一次。Crisp 解析的是共享子集：`turn_id` 是
+Codex 扩展，Claude 缺失时不视为协议异常。Claude transcript 中包裹工具结果的 `type:"user"`
+记录会被跳过，避免把工具输出当作"最近用户消息"传给 Critic。
 
 ### 6.1 输入（stdin，单个 JSON 对象）
 
@@ -321,8 +334,10 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 
 1. Phase 1（已完成）：Codex Stop Hook + Go Checker + Critic + 一次重写限制 + 回归测试。
 2. Phase 2（已完成）：`crisp check-file` 文档检查（Stop Hook 不自动检查磁盘文件）。
-3. Phase 3（进行中）：DeepSeek Harness（Cordis 插件接入 `llm/stream`；规则可流式，语义需缓存完整回答）。
-4. Phase 4（进行中）：终端 Agent 接入层（Claude Code Stop Hook、opencode 插件）；\n   对完全不支持扩展的 Agent 再考虑本地 API Proxy。
+3. Phase 3（已完成）：DeepSeek Harness Cordis 插件。规则可在 llm/stream 上流式观察；语义检查在流
+   结束后对完整回答执行；默认 observe，guard 模式后置一次重写。见 docs/dsh-integration.md。
+4. Phase 4（已完成）：终端 Agent 接入层：Claude Code Stop Hook（与 Codex 共享协议）、opencode 插件、
+   通用 Hook 协议文档。对完全不支持扩展的 Agent 的本地 API Proxy 仍属于后续工作。
 
 ## 14. CLI
 
@@ -332,3 +347,16 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 | `crisp check-text` | 测试/评测入口：stdin 读原始回答文本，stdout 输出决策摘要 JSON |
 | `crisp check-file` | 文档检查：`crisp check-file [--json] <file> [...]`，`-` 读 stdin；退出码 0 通过 / 1 BLOCK / 2 错误 |
 | `crisp version` | 版本 |
+
+## 15. Agent 接入矩阵（Phase 3/4 落地）
+
+| Agent | 接入点 | 重写触发方式 | 已验证范围 |
+| --- | --- | --- | --- |
+| Codex CLI | Stop Hook | block JSON → CLI 完整重写；`stop_hook_active` 阻止循环 | 真实 CLI E2E 8/8（docs/codex-e2e.md） |
+| Claude Code | Stop Hook | 同上 | 真实 CLI E2E 3/3（docs/integrations/claude-code.md） |
+| DeepSeek Harness | Cordis Host 插件 llm/stream | guard 模式在一次 block 后调用 agent.followup 追加改写请求；内存 guard 每 Turn 一次 | 单测 57 + 真实 dsh headless guard E2E（docs/dsh-integration.md） |
+| opencode | 插件事件钩子 | block 后 session.promptAsync 一次重写；内存 guard 每消息一次 | 单测 51 + 真实 opencode serve E2E（docs/integrations/opencode.md） |
+| 其他 Hook Agent | 通用 stdin/stdout 协议 | 由宿主是否阻塞决定交付前/后置 | 协议文档（docs/integrations/generic-hook-protocol.md） |
+
+共同约束：规则从不单独 BLOCK；只有 Critic 返回 decision=block 且 severity=material 才触发重写；
+任何内部异常 fail-open；每个 Turn/消息最多一次重写。
