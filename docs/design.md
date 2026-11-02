@@ -186,10 +186,11 @@ Codex 的 `stop_hook_active` 表示此前已因 Stop Hook 触发过续写，平�
 
 | 模式 | 行为 |
 | --- | --- |
-| `balanced`（默认） | 非短小自然语言回答（natural_runes ≥ 120）全部送 Critic |
+| `balanced`（默认） | 非短小自然语言回答（natural_runes ≥ 120）全部送 Critic；任何规则发现也送 Critic |
 | `economy` | 只有规则发现可疑时才调用 Critic |
 
-短回答（自然语言不足 120 runes）不调用 Critic，直接放行。
+短回答（自然语言不足 120 runes）且规则无发现时不调用 Critic，直接放行；
+短回答只要出现规则发现（哪怕只是 minor 填充语）仍会送 Critic，因为规则本身从不产生 BLOCK。
 
 ## 9. 最终决策（policy）
 

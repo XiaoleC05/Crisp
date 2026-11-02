@@ -45,17 +45,21 @@ func (c Config) Normalize() Config {
 
 // NeedsCritic reports whether the LLM critic should review this answer.
 //
-// balanced: review every non-trivial natural-language answer.
+// A deterministic finding always triggers a semantic review, even for short
+// answers: a short answer made only of boilerplate is still low quality, and
+// rules are never allowed to block without critic confirmation.
+//
+// balanced: also review every non-trivial natural-language answer.
 // economy: review only answers that already produced deterministic findings.
 func NeedsCritic(cfg Config, report checker.Report, answer string) bool {
 	cfg = cfg.Normalize()
-	if report.Stats.NaturalRunes < cfg.MinCriticRunes {
-		return false
+	if len(report.Findings) > 0 {
+		return true
 	}
 	if cfg.Mode == ModeEconomy {
-		return len(report.Findings) > 0
+		return false
 	}
-	return true
+	return report.Stats.NaturalRunes >= cfg.MinCriticRunes
 }
 
 // Decision is the final quality gate outcome.

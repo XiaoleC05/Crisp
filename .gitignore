@@ -6,3 +6,9 @@
 
 # local scratch (E2E harness, mock auth, logs)
 /.tmp/
+
+# test/coverage artifacts
+test/coverage*
+/coverage*
+/*.coverprofile
+
