@@ -1,0 +1,28 @@
+{
+  "name": "@local/opencode-crisp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crisp quality gate as an opencode plugin: runs 'crisp check-text' on completed assistant answers, logs a structured decision, and (optionally) requests exactly one rewrite.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "crisp",
+    "quality-gate"
+  ],
+  "license": "MIT"
+}
