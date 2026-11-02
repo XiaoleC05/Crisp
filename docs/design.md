@@ -312,8 +312,10 @@ fail-open，并在报告中说明真实 Critic 一致性需配置服务后补测
 
 ### 12.5 超时验证（必做）
 
-临时把 hooks.json 的 `timeout` 改为 2，Hook 命令改为一个 sleep 5 的命令，确认 Codex 约 2 秒
-终止 Hook，然后恢复 30 秒，并记录 `codex --version`。
+临时把 hooks.json 的 `timeout` 改为 2，Hook 命令改为一个 sleep 5 的命令，记录实际行为，然后恢复
+30 秒，并记录 `codex --version`。实测（Codex CLI 0.145.0-alpha.18 / Windows）：超时后 Codex 把 Hook
+标记为 Stop Failed 并丢弃其输出（CLI 层 fail-open），但**不会终止 Hook 进程**；详见
+[docs/codex-e2e.md](codex-e2e.md)。
 
 ## 13. 后续扩展路线
 
