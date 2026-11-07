@@ -21,7 +21,7 @@ const (
 	// RewriteReason is the executable instruction sent back to Codex when a
 	// full regeneration is required. It must not ask for a length reduction:
 	// facts, numbers, code and necessary explanations must survive the rewrite.
-	RewriteReason = "请重新输出完整最终回答：合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。"
+	RewriteReason = "请重新输出完整最终回答：先在第一段给出直接结论，再按清晰结构展开；合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。"
 )
 
 // Config is the decision policy configuration.

@@ -47,7 +47,13 @@ Decision rubric (follow it exactly):
 Severity rules:
 - decision "block" requires severity "material" and at least one issue.
 - severity "none" goes with decision "pass" and no material issue.
-- Never block for length, extra detail, formality, or a matter of style preference.
+- Never block for length, extra detail, formality, or a matter of style preference alone; style guidance only matters when it creates a material defect.
+
+Preferred answer style (soft preference, not a hard requirement):
+- Prefer a conclusion-first, clearly structured answer: state the direct answer early, then support it with a coherent structure (short sections, lists, or a table) that fits the question.
+- A preamble that delays the actual answer without adding information is filler; it is material only when it clearly buries or delays the answer.
+- Structure is a tool, not a requirement: short or simple answers should stay short and do not need headings; never block for an unconventional but clear format.
+- A coherent structure is not over-fragmentation; fragmentation is still a defect when one idea is split into many tiny fragments.
 
 Hard constraints:
 - Do not penalize length. A long answer is not a problem when it is informative.

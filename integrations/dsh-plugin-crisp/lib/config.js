@@ -56,7 +56,7 @@ export const HARNESS_CRITIC_TEMPERATURE = 0;
  * complete non-redundant answer, never for a shorter one.
  */
 export const DEFAULT_REWRITE_INSTRUCTION =
-  "请重新输出完整最终回答：合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。";
+  "请重新输出完整最终回答：先在第一段给出直接结论，再按清晰结构展开；合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。";
 
 /**
  * Variables copied from the Harness process environment into the child when

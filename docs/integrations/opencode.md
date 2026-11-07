@@ -140,7 +140,7 @@ opencode 没有 Codex 的 Stop-hook “block 并让模型重新生成完整回�
 2. **恰好一次重写**（`rewrite !== false` 且 `session.promptAsync` 可用时）：
    向该 session 追加一个用户 turn，内容为与 `internal/policy/decision.go` 中
    `policy.RewriteReason` **逐字一致** 的固定指令：
-   `请重新输出完整最终回答：合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。`
+   `请重新输出完整最终回答：先在第一段给出直接结论，再按清晰结构展开；合并语义重复的段落，删除无效铺垫和结论重复，保留全部必要事实、数字、代码和解释，不要为了缩短篇幅而删除必要信息。`
    同时带上原回答的 `model` / `agent`，确保同一模型重写。
 
 一次重写守卫（对应 Codex 的 `stop_hook_active`，见 docs/design.md 6.4）：

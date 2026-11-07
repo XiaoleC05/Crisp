@@ -15,6 +15,9 @@
 - Critic 新增 ~~QUALITY_GATE_EXTRA_BODY_JSON~~：把 provider 专有字段合并进请求体，例如用
   ~~{"thinking":{"type":"disabled"}}~~ 关闭 DeepSeek-V4.1-Flash 的思考模式。已用真实官方 API
   验证：重复结论样本返回 block（semantic_duplicate，约 1.4s），正常技术样本返回 pass（约 0.6s）。
+- Critic 默认评审偏好改为**结论先行、整体结构化**：铺垫实质性延迟/遮蔽结论或把同一观点拆碎
+  才算 material；短回答不因缺少标题被拦截，长而信息密度高的回答不扣分。固定重写指令同步加入
+  "先在第一段给出直接结论，再按清晰结构展开"（Go policy、DSH/opencode 插件三处逐字一致）。
 
 ## [0.1.0] - 2026-11-02
 
