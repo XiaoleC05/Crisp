@@ -37,8 +37,8 @@ a DeepSeek Harness Host plugin.
   (default) or the **Harness's own signed-in model** through `ctx.llm`
   (`critic: harness`, e.g. DeepSeek-V4.1-Flash with thinking off). See
   [Critic modes](#critic-modes).
-- The bundle also contributes a **Web UI left-sidebar entry** ("质量门禁" /
-  "Quality gate") that opens a standalone status page: current mode, critic
+- The bundle also contributes a **Web UI left-sidebar entry** ("输出优化" in
+Chinese, "Quality gate" in English) that opens a standalone status page: current mode, critic
   model/capabilities, today's counters, average critic latency, and the latest
   20 checks read from the local JSONL log. The Host half serves that page's data
   as `GET /crisp/status`; no answer text or credentials are exposed. See
@@ -434,7 +434,7 @@ In harness mode a `crisp_quality_check` record additionally carries
 
 ### Left-sidebar status page
 
-The Web half adds a **质量门禁 / Quality gate** entry to the left sidebar. It
+The Web half adds a **输出优化 / Quality gate** entry to the left sidebar. It
 opens a standalone main-area page (a keyed `main` panel), not a second
 conversation surface; **返回对话 / Back to chat** returns to the current
 conversation.
@@ -653,7 +653,7 @@ Measured on the installed `desktop` profile (Harness 0.2.2-rc.1) on 2026-11-13:
 2. An authenticated headless browser session (temporary Edge profile, browser
    session cookie minted from this harness's `client-connection/browser-session`
    credential) loaded the page:
-   - the left sidebar contained a button with `aria-label="质量门禁"`;
+   - the left sidebar contained a button with `aria-label="输出优化"`;
    - clicking it opened the page shown in
      [Left-sidebar status page](#left-sidebar-status-page): `GUARD`,
      `deepseek-flash`, `HTTP · api.deepseek.com · 思考已关闭`, today's
@@ -742,7 +742,7 @@ cd D:\05_Code\Crisp\integrations\dsh-plugin-crisp; node --test "test/*.test.js"
 # binary contract used by the plugin
 'This is a normal complete answer.' | D:\05_Code\Crisp\bin\crisp.exe check-text
 
-# Web status page: left sidebar -> 质量门禁, or an authenticated GET:
+# Web status page: left sidebar -> 输出优化, or an authenticated GET:
 #   GET http://127.0.0.1:<web-port>/crisp/status  (browser session cookie)
 
 # inspect the most recent harness run (summary + gate/mock logs)

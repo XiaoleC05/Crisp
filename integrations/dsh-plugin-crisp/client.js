@@ -19,8 +19,8 @@ window.__ModuleLoader__.load({
     const REFRESH_MS = 5000;
 
     const zh = {
-      panel: "质量门禁",
-      title: "Crisp 质量门禁",
+      panel: "输出优化",
+      title: "Crisp 输出优化",
       subtitle: "对每条最终回答做确定性规则检查 + LLM 语义审查；guard 模式会在 material 问题时要求一次完整重写。",
       back: "返回对话",
       refresh: "刷新",
@@ -121,7 +121,7 @@ window.__ModuleLoader__.load({
     };
 
     const REASON_LABELS = {
-      critic_pass: { zh: "语义通过", en: "critic passed" },
+      critic_pass: { zh: "无需优化", en: "no optimization needed" },
       critic_error: { zh: "Critic 错误", en: "critic error" },
       semantic_duplicate: { zh: "语义重复", en: "semantic duplicate" },
       filler: { zh: "无效铺垫", en: "filler" },

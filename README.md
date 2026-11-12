@@ -151,7 +151,7 @@ stdout: {} 放行     或     {"decision":"block","reason":"..."} 要求完整�
 | Codex CLI 0.145.0-alpha.18 | 真实 E2E 8/8（含 timeout、trust gate、loop guard） | [codex-cli](docs/integrations/codex-cli.md) |
 | Claude Code 2.1.312 | 真实 E2E 3/3（block → 重写 → 二次 Stop 放行） | [claude-code](docs/integrations/claude-code.md) |
 | DeepSeek Harness 插件 | 87 单测 + 真实 dsh headless guard E2E | [deepseek-harness](docs/integrations/deepseek-harness.md) |
-| DeepSeek Harness Web 左侧栏 | 实机验证：左栏「质量门禁」入口打开独立状态页，展示 GUARD、deepseek-flash、思考关闭、今日计数与最近记录；页面无 console 错误 | [截图](docs/assets/deepseek-harness-sidebar.png) / [deepseek-harness](docs/integrations/deepseek-harness.md) |
+| DeepSeek Harness Web 左侧栏 | 实机验证：左栏「输出优化」入口打开独立状态页，展示 GUARD、deepseek-flash、思考关闭、今日计数与最近记录；页面无 console 错误 | [截图](docs/assets/deepseek-harness-sidebar.png) / [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | 真实 Critic（DeepSeek-V4.1-Flash HTTP，思考关闭） | 冒烟：重复结论样本 block/semantic_duplicate（1.4s，1167 tokens），正常长样本 pass（0.6s，1272 tokens），`fail_open=false` | [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | opencode 1.18.18 插件 | 51 单测 + 真实 serve E2E（pass 与 block→一次重写） | [opencode](docs/integrations/opencode.md) |
 

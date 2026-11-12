@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- DSH Web 左侧栏中文名改为 **“输出优化”**（页面标题同步）；PASS 记录的原因从“语义通过”
+  改为 **“无需优化”**，避免被误读为“发生了重写”。内部实现与 `reason_type: critic_pass`
+  保持不变。
+
 ### Added
 
 - DSH Hint 插件新增 **`critic: harness`** 模式：语义审查改走 Harness 自身的 `ctx.llm`
