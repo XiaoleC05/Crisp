@@ -9,6 +9,12 @@ import {
   CRITIC_HTTP,
   DEFAULT_CRITIC_REASONING_EFFORT,
   DEFAULT_CRITIC_TIMEOUT_MS,
+  DEFAULT_OPTIMIZER_REASONING_EFFORT,
+  DEFAULT_OPTIMIZER_TIMEOUT_MS,
+  DELIVERY_OPTIMIZE,
+  DELIVERY_STREAM,
+  MAX_OPTIMIZER_TIMEOUT_MS,
+  MIN_OPTIMIZER_TIMEOUT_MS,
   DEFAULT_REWRITE_INSTRUCTION,
   DEFAULT_TIMEOUT_MS,
   HARNESS_CRITIC_MAX_TOKENS,
@@ -49,6 +55,12 @@ test("defaults are defensive and observe-only", () => {
   assert.equal(config.criticReasoningEffort, DEFAULT_CRITIC_REASONING_EFFORT);
   assert.equal(config.criticTimeoutMs, DEFAULT_CRITIC_TIMEOUT_MS);
   assert.equal(config.criticTimeoutMs, 15_000);
+  assert.equal(config.delivery, DELIVERY_STREAM);
+  assert.equal(config.optimizerProvider, "");
+  assert.equal(config.optimizerModel, "");
+  assert.equal(config.optimizerReasoningEffort, DEFAULT_OPTIMIZER_REASONING_EFFORT);
+  assert.equal(config.optimizerTimeoutMs, DEFAULT_OPTIMIZER_TIMEOUT_MS);
+  assert.equal(config.optimizerTimeoutMs, 30_000);
   assert.equal(HARNESS_CRITIC_MAX_TOKENS, 1024);
   assert.equal(HARNESS_CRITIC_TEMPERATURE, 0);
   assert.deepEqual(config.warnings, []);
@@ -245,5 +257,77 @@ test("critic timeout is clamped to the documented bounds", () => {
   assert.equal(
     resolveConfig({ criticTimeoutMs: "nope" }, {}, "win32").criticTimeoutMs,
     DEFAULT_CRITIC_TIMEOUT_MS,
+  );
+});
+test("optimize delivery configuration is normalized", () => {
+  const config = resolveConfig(
+    {
+      mode: "guard",
+      delivery: "OPTIMIZE",
+      optimizerProvider: " deepseek-account ",
+      optimizerModel: " deepseek-flash ",
+      optimizerReasoningEffort: "OFF",
+      optimizerTimeoutMs: 12_345,
+    },
+    {},
+    "win32",
+  );
+  assert.equal(config.delivery, DELIVERY_OPTIMIZE);
+  assert.equal(config.optimizerProvider, "deepseek-account");
+  assert.equal(config.optimizerModel, "deepseek-flash");
+  assert.equal(config.optimizerReasoningEffort, "off");
+  assert.equal(config.optimizerTimeoutMs, 12_345);
+  assert.deepEqual(config.warnings, []);
+});
+
+test("unknown delivery and optimizer effort fall back with warnings", () => {
+  const config = resolveConfig(
+    { delivery: "inline", optimizerReasoningEffort: "extreme" },
+    {},
+    "win32",
+  );
+  assert.equal(config.delivery, DELIVERY_STREAM);
+  assert.equal(config.optimizerReasoningEffort, "off");
+  assert.ok(config.warnings.some((warning) => warning.includes("unknown delivery")));
+  assert.ok(config.warnings.some((warning) => warning.includes("unknown optimizerReasoningEffort")));
+});
+
+test("optimize delivery warns when it cannot apply", () => {
+  const wrongMode = resolveConfig({ delivery: "optimize" }, {}, "win32");
+  assert.equal(wrongMode.delivery, DELIVERY_OPTIMIZE);
+  assert.ok(wrongMode.warnings.some((warning) => warning.includes('only applies with mode "guard"')));
+
+  const missingRoute = resolveConfig({ mode: "guard", delivery: "optimize" }, {}, "win32");
+  assert.ok(
+    missingRoute.warnings.some((warning) => warning.includes("needs optimizerProvider and optimizerModel")),
+  );
+  // A complete configure has no warning.
+  assert.deepEqual(
+    resolveConfig(
+      {
+        mode: "guard",
+        delivery: "optimize",
+        optimizerProvider: "deepseek-account",
+        optimizerModel: "deepseek-flash",
+      },
+      {},
+      "win32",
+    ).warnings,
+    [],
+  );
+});
+
+test("optimizer timeout is clamped to the documented bounds", () => {
+  assert.equal(
+    resolveConfig({ optimizerTimeoutMs: 1 }, {}, "win32").optimizerTimeoutMs,
+    MIN_OPTIMIZER_TIMEOUT_MS,
+  );
+  assert.equal(
+    resolveConfig({ optimizerTimeoutMs: 999_999 }, {}, "win32").optimizerTimeoutMs,
+    MAX_OPTIMIZER_TIMEOUT_MS,
+  );
+  assert.equal(
+    resolveConfig({ optimizerTimeoutMs: "nope" }, {}, "win32").optimizerTimeoutMs,
+    DEFAULT_OPTIMIZER_TIMEOUT_MS,
   );
 });

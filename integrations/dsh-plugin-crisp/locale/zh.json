@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Crisp 输出优化",
-    "description": "使用 Crisp 二进制检查已完成的助手回答，记录结构化决策，guard 模式下请求一次完整重写，并在 Web GUI 左侧栏提供实时状态页。"
+    "description": "检查已完成的助手回答，命中 material 问题时可在 Web GUI 中交付前重写，并在左侧栏提供实时状态页。"
   }
 }

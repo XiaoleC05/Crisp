@@ -7,9 +7,9 @@
 
 ### Changed
 
-- DSH Web 左侧栏中文名改为 **“输出优化”**（页面标题同步）；PASS 记录的原因从“语义通过”
-  改为 **“无需优化”**，避免被误读为“发生了重写”。内部实现与 `reason_type: critic_pass`
-  保持不变。
+- DSH Web 左侧栏中文名改为 **“输出优化”**，英文名统一为 **Crisp**（页面标题同步）；
+  PASS 记录的原因从“语义通过”改为 **“无需优化”**，避免被误读为“发生了重写”。
+  内部实现与 `reason_type: critic_pass` 保持不变。
 
 ### Added
 
@@ -24,6 +24,11 @@
 - Critic 默认评审偏好改为**结论先行、整体结构化**：铺垫实质性延迟/遮蔽结论或把同一观点拆碎
   才算 material；短回答不因缺少标题被拦截，长而信息密度高的回答不扣分。固定重写指令同步加入
   "先在第一段给出直接结论，再按清晰结构展开"（Go policy、DSH/opencode 插件三处逐字一致）。
+- DSH 插件新增 **交付前优化交付（`delivery: optimize`）**：guard 模式下缓冲完整回答，
+  material BLOCK 时通过 Harness 模型生成一次完整重写，并**只把重写后的版本流式输出**给用户，
+  不产生额外可见 turn；pass 路径回放原回答（失去逐字流式）。已在本机真实会话中验证：
+  无效铺垫样本 BLOCK(filler) → 258→120 runes（540 tokens），无 followup。见
+  [docs/integrations/deepseek-harness.md](docs/integrations/deepseek-harness.md)。
 - DSH 插件新增 **Web 左侧栏状态页**：左侧栏「质量门禁」入口打开独立主区页面，展示模式、
   Critic 模型/思考状态、今日计数、平均延迟与最近 20 条审查记录；Host 半边在存在 `webServer`
   时注册只读 `GET /crisp/status`（connection 浏览器栅栏、`no-store`、不返回答案文本或

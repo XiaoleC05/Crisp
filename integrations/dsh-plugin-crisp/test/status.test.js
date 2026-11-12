@@ -116,6 +116,7 @@ test("snapshot aggregates recent checks, today counts and guard activity", () =>
     const snapshot = service.snapshot();
     assert.equal(snapshot.ok, true);
     assert.equal(snapshot.config.mode, "guard");
+    assert.equal(snapshot.config.delivery, "stream");
     assert.equal(snapshot.config.critic.mode, "http");
     assert.equal(snapshot.config.critic.model, "deepseek-flash");
     assert.equal(snapshot.config.critic.baseURLHost, "api.deepseek.com");
@@ -141,6 +142,27 @@ test("snapshot aggregates recent checks, today counts and guard activity", () =>
     assert.equal(serialized.includes("sk-secret-value"), false, "API key must never leave the host");
     assert.equal(serialized.includes("https://api.deepseek.com"), false, "raw base URL is not needed");
   });
+});
+
+test("snapshot exposes the optimize delivery configuration", () => {
+  const service = createStatusService(
+    {},
+    {
+      mode: "guard",
+      delivery: "optimize",
+      optimizerProvider: "deepseek-account",
+      optimizerModel: "deepseek-flash",
+      optimizerReasoningEffort: "off",
+      optimizerTimeoutMs: 30000,
+      logFile: "",
+    },
+    { now: () => NOON },
+  );
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.config.delivery, "optimize");
+  assert.equal(snapshot.config.optimizer.provider, "deepseek-account");
+  assert.equal(snapshot.config.optimizer.model, "deepseek-flash");
+  assert.equal(snapshot.config.optimizer.configured, true);
 });
 
 test("missing or malformed logs degrade to an empty snapshot", () => {

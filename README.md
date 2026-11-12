@@ -4,7 +4,9 @@
 无效解释、结论重复和信息密度低等问题——但绝不为了精简而丢失事实、数字、代码和必要解释。
 
 *Crisp is a fail-open output-quality gate for terminal coding agents: deterministic rules plus an
-OpenAI-compatible LLM critic, with at most one full rewrite per turn.*
+OpenAI-compatible LLM critic, with at most one full rewrite per turn. In the DeepSeek Harness plugin,
+`delivery: optimize` can rewrite a material answer **before delivery** and stream only the rewritten
+answer to the user, with no extra visible turn.*
 
 [![CI](https://github.com/XiaoleC05/Crisp/actions/workflows/ci.yml/badge.svg)](https://github.com/XiaoleC05/Crisp/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go)](go.mod)
@@ -34,7 +36,7 @@ Agent 的回答经常"看起来很多，实际信息很少"：开头客套、结
 | --- | --- | --- | --- | --- | --- |
 | **Codex CLI** | Stop Hook | 交付前：block 后完整重写 | `stop_hook_active` | 8 项检查通过（S0 replay + S1–S6 真实 CLI） | [codex-cli](docs/integrations/codex-cli.md) |
 | **Claude Code** | Stop Hook | 交付前：block 后完整重写 | `stop_hook_active` | 3 项检查通过（含真实 CLI 场景） | [claude-code](docs/integrations/claude-code.md) |
-| **DeepSeek Harness** | Cordis Host + Web 插件（`llm/stream` + 左侧栏页面） | 默认 observe；guard 为后置重写 | 插件内存 guard | 87 单测 + 真实 headless guard E2E + 实机左侧栏/真实 Critic 冒烟 | [deepseek-harness](docs/integrations/deepseek-harness.md) |
+| **DeepSeek Harness** | Cordis Host + Web 插件（`llm/stream` + 左侧栏页面） | 默认 observe；guard 可后置重写或交付前优化（`delivery: optimize`） | 插件内存 guard / 单次 optimizer | 109 单测 + 仓库内 headless guard E2E；本机实测左侧栏、真实 Critic 与交付前重写 | [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | **opencode** | 插件事件钩子 | 后置：toast + 一次重写 followup | 插件内存 guard | 51 单测 + 真实 serve E2E | [opencode](docs/integrations/opencode.md) |
 | 其他 Hook Agent | 通用 stdin/stdout 协议 | 由宿主是否阻塞决定 | 宿主 + `stop_hook_active` | 协议文档 | [generic-hook-protocol](docs/integrations/generic-hook-protocol.md) |
 
@@ -150,19 +152,21 @@ stdout: {} 放行     或     {"decision":"block","reason":"..."} 要求完整�
 | Hook 集成测试 | 正常/block/二次 Stop/字段缺失/解析失败/空消息/Critic 故障/stdout JSON | `go test ./cmd/crisp` |
 | Codex CLI 0.145.0-alpha.18 | 真实 E2E 8/8（含 timeout、trust gate、loop guard） | [codex-cli](docs/integrations/codex-cli.md) |
 | Claude Code 2.1.312 | 真实 E2E 3/3（block → 重写 → 二次 Stop 放行） | [claude-code](docs/integrations/claude-code.md) |
-| DeepSeek Harness 插件 | 87 单测 + 真实 dsh headless guard E2E | [deepseek-harness](docs/integrations/deepseek-harness.md) |
+| DeepSeek Harness 插件 | 109 单测 + 仓库内真实 dsh headless guard E2E；本机另测 optimize 交付前重写 | [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | DeepSeek Harness Web 左侧栏 | 实机验证：左栏「输出优化」入口打开独立状态页，展示 GUARD、deepseek-flash、思考关闭、今日计数与最近记录；页面无 console 错误 | [截图](docs/assets/deepseek-harness-sidebar.png) / [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | 真实 Critic（DeepSeek-V4.1-Flash HTTP，思考关闭） | 冒烟：重复结论样本 block/semantic_duplicate（1.4s，1167 tokens），正常长样本 pass（0.6s，1272 tokens），`fail_open=false` | [deepseek-harness](docs/integrations/deepseek-harness.md) |
+| DSH 交付前重写（实机，`delivery: optimize`） | 受控无效铺垫样本：BLOCK(`filler`) → 交付前重写 258→120 runes（540 tokens）；用户只收到优化版，无额外 turn | [deepseek-harness](docs/integrations/deepseek-harness.md) |
 | opencode 1.18.18 插件 | 51 单测 + 真实 serve E2E（pass 与 block→一次重写） | [opencode](docs/integrations/opencode.md) |
 
 已提交的 E2E 使用本地 mock（宿主安装/依赖步骤可能联网），不使用用户凭据、不修改用户配置；
-上表的"真实 Critic"与"Web 左侧栏"是在本机集成环境中的额外实测，不属于仓库内可重复的 mock E2E。
+上表的"真实 Critic"、"Web 左侧栏"和"DSH 交付前重写"是在本机集成环境中的额外实测，不属于仓库内可重复的 mock E2E。
 **尚未测量**：真实 Critic 的 30 样本 × 多次一致性、误杀率与最终重写改善率——需要按
 [eval-report](docs/eval-report.md) 的方法补测。
 
 ## 数据边界与安全
 
 - 回答全文与可选的最近一条用户消息（截断到 2000 字符）会发送给配置的 Critic 服务；
+  `delivery: optimize` 命中重写时，原回答还会发送给已登录的 Harness 模型生成一次重写；
   请只配置可信服务，是否外发由部署方决定。
 - 本地日志只记录决策、规则类型、耗时、token 数等指标，**不记录完整回答、用户隐私或 API Key**。
 - Hook 只执行本地 `crisp` 进程；插件通过 stdin 调用同一二进制；Crisp 不监听网络端口、不改写文件。

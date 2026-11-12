@@ -24,6 +24,7 @@ import {
   rawFailure,
   rawPass,
   rawRules,
+  rewriteChunks,
   runStream,
   textChunks,
 } from "./helpers.js";
@@ -544,4 +545,224 @@ test("http critic mode remains the default and never touches the harness LLM", a
   const check = harness.checks()[0];
   assert.equal(check.decision, "pass");
   assert.equal("critic" in check, false);
+});
+
+// ---------------------------------------------------------------------------
+// delivery:"optimize" (pre-delivery streamed rewrite, no extra visible turn)
+// ---------------------------------------------------------------------------
+
+const OPTIMIZE_CONFIG = {
+  delivery: "optimize",
+  optimizerProvider: "deepseek-account",
+  optimizerModel: "deepseek-flash",
+};
+
+function optimizeSetup(overrides = {}) {
+  return setup({
+    mode: "guard",
+    ...overrides,
+    config: { ...OPTIMIZE_CONFIG, ...(overrides.config ?? {}) },
+  });
+}
+
+test("optimize delivery: pass replays the original chunks unchanged", async () => {
+  const llm = createFakeLlm(rewriteChunks("should not be used"));
+  const harness = optimizeSetup({ runner: createFakeRunner(rawPass()), llm });
+  const chunks = finalAnswerChunks("A normal answer that passes review.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, chunks);
+  assert.equal(out.length, chunks.length);
+  for (let index = 0; index < chunks.length; index += 1) assert.equal(out[index], chunks[index]);
+  assert.equal(llm.calls.length, 0, "pass path must not call the optimizer");
+  assert.equal(harness.agent.followups.length, 0);
+  assert.equal(harness.events("crisp_optimize_started").length, 0);
+  assert.equal(harness.checks().length, 1);
+  assert.equal(harness.checks()[0].decision, "pass");
+});
+
+test("optimize delivery: block yields only the streamed rewrite, no followup", async () => {
+  const rewrite = rewriteChunks("Rewritten answer that keeps the facts.", {
+    usage: { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
+  });
+  const llm = createFakeLlm(rewrite);
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, original);
+
+  assert.equal(out.length, rewrite.length);
+  for (let index = 0; index < rewrite.length; index += 1) assert.equal(out[index], rewrite[index]);
+  for (const chunk of original) assert.ok(!out.includes(chunk), "original chunk must not reach the consumer");
+  const visible = out.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.text).join("");
+  assert.equal(visible, "Rewritten answer that keeps the facts.");
+  assert.ok(!visible.includes("flawed original"));
+
+  assert.equal(llm.calls.length, 1, "exactly one rewrite");
+  const options = llm.calls[0];
+  assert.equal(options.provider, "deepseek-account");
+  assert.equal(options.model, "deepseek-flash");
+  assert.equal(options.purpose, "crisp-optimize");
+  assert.equal("sessionId" in options, false);
+  assert.equal(harness.agent.followups.length, 0, "no extra turn in optimize mode");
+
+  const started = harness.events("crisp_optimize_started");
+  const applied = harness.events("crisp_optimize_applied");
+  assert.equal(started.length, 1);
+  assert.equal(applied.length, 1);
+  assert.equal(started[0].delivery, "optimize");
+  assert.equal(applied[0].delivery, "optimize");
+  assert.equal(applied[0].rewrite_runes, 38);
+  assert.equal(applied[0].tokens, 42);
+  assert.equal(harness.checks()[0].decision, "block");
+});
+
+test("optimize delivery: rewrite chunks reach the consumer before the rewrite completes", async () => {
+  let release;
+  const finished = new Promise((resolve) => {
+    release = resolve;
+  });
+  let rewriteFinished = false;
+  const llm = {
+    calls: [],
+    stream(options) {
+      this.calls.push(options);
+      return (async function* slowRewrite() {
+        yield { type: "block-start", index: 0, blockType: "text" };
+        yield { type: "text-delta", index: 0, text: "First streamed part" };
+        await finished;
+        yield { type: "text-delta", index: 0, text: " and the rest." };
+        yield { type: "finish", reason: { kind: "stop" } };
+        rewriteFinished = true;
+      })();
+    },
+  };
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const handler = harness.ctx.handlersFor("llm/stream")[0];
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const stream = handler({ sessionId: "s1" }, downstreamFrom(original));
+  const iterator = stream[Symbol.asyncIterator]();
+
+  // The gate holds chunks until the first visible rewrite delta, then streams.
+  const first = await iterator.next();
+  assert.equal(first.value.type, "block-start");
+  const second = await iterator.next();
+  assert.equal(second.value.type, "text-delta");
+  assert.equal(second.value.text, "First streamed part");
+  assert.equal(rewriteFinished, false, "consumer must receive chunks while the rewrite is still running");
+
+  release();
+  const rest = [];
+  for (let next = await iterator.next(); !next.done; next = await iterator.next()) rest.push(next.value);
+  assert.equal(rewriteFinished, true);
+  const visible = ["First streamed part", ...rest.filter((c) => c.type === "text-delta").map((c) => c.text)].join("");
+  assert.equal(visible, "First streamed part and the rest.");
+});
+
+test("optimize delivery: a rewrite that cannot start replays the original", async () => {
+  const llm = {
+    calls: [],
+    stream() {
+      throw new Error("NO_ADAPTER");
+    },
+  };
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, original);
+  assert.equal(out.length, original.length);
+  for (let index = 0; index < original.length; index += 1) assert.equal(out[index], original[index]);
+  const errors = harness.events("crisp_optimize_error");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].phase, "start");
+  assert.match(errors[0].error, /NO_ADAPTER/);
+  assert.equal(harness.agent.followups.length, 0);
+});
+
+test("optimize delivery: a rewrite with no visible text replays the original", async () => {
+  const llm = createFakeLlm([
+    { type: "block-start", index: 0, blockType: "text" },
+    { type: "finish", reason: { kind: "stop" } },
+  ]);
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, original);
+  assert.equal(out.length, original.length);
+  for (let index = 0; index < original.length; index += 1) assert.equal(out[index], original[index]);
+  assert.equal(harness.events("crisp_optimize_error")[0].phase, "empty_rewrite");
+});
+
+test("optimize delivery: mid-rewrite failure terminates with an error finish, never the original", async () => {
+  const llm = {
+    calls: [],
+    stream(options) {
+      this.calls.push(options);
+      return (async function* brokenRewrite() {
+        yield { type: "block-start", index: 0, blockType: "text" };
+        yield { type: "text-delta", index: 0, text: "Partial rewrite" };
+        throw new Error("stream broke");
+      })();
+    },
+  };
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, original);
+  const visible = out.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.text).join("");
+  assert.equal(visible, "Partial rewrite");
+  const finish = out.filter((chunk) => chunk.type === "finish");
+  assert.equal(finish.length, 1);
+  assert.equal(finish[0].reason.kind, "error");
+  assert.equal(finish[0].reason.failure.code, "CRISP_OPTIMIZE_ERROR");
+  for (const chunk of original) assert.ok(!out.includes(chunk), "original must not be appended after a partial rewrite");
+  assert.equal(harness.events("crisp_optimize_error")[0].phase, "mid_stream");
+});
+
+test("optimize delivery: tool-call steps replay without review or rewrite", async () => {
+  const llm = createFakeLlm(rewriteChunks("should not be used"));
+  const harness = optimizeSetup({ runner: createFakeRunner(rawBlock()), llm });
+  const chunks = [
+    ...textChunks("Let me check the file."),
+    { type: "tool-call-delta", index: 1, id: "call-1", argumentsDelta: "{}" },
+    { type: "finish", reason: { kind: "stop" } },
+  ];
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, chunks);
+  assert.equal(out.length, chunks.length);
+  for (let index = 0; index < chunks.length; index += 1) assert.equal(out[index], chunks[index]);
+  assert.equal(llm.calls.length, 0);
+  assert.equal(harness.checks().length, 0);
+  assert.equal(harness.events("crisp_optimize_started").length, 0);
+});
+
+test("optimize delivery: missing optimizer route replays the original and warns", async () => {
+  const llm = createFakeLlm(rewriteChunks("should not be used"));
+  const harness = setup({
+    mode: "guard",
+    runner: createFakeRunner(rawBlock()),
+    llm,
+    config: { delivery: "optimize" },
+  });
+  const original = finalAnswerChunks("A flawed original answer text.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, original);
+  assert.equal(out.length, original.length);
+  for (let index = 0; index < original.length; index += 1) assert.equal(out[index], original[index]);
+  assert.equal(llm.calls.length, 0);
+  assert.equal(harness.agent.followups.length, 0);
+  const activation = harness.activation()[0];
+  assert.equal(activation.delivery, "optimize");
+  assert.equal(activation.optimize_available, false);
+  assert.ok(activation.warnings.some((warning) => warning.includes("needs optimizerProvider and optimizerModel")));
+});
+
+test("optimize delivery is ignored outside guard mode", async () => {
+  const llm = createFakeLlm(rewriteChunks("should not be used"));
+  const harness = setup({
+    runner: createFakeRunner(rawBlock()),
+    llm,
+    config: { delivery: "optimize" },
+  });
+  const chunks = finalAnswerChunks("An observe-mode answer.");
+  const out = await runStreamSettled(harness.ctx, { sessionId: "s1" }, chunks);
+  assert.equal(out.length, chunks.length);
+  for (let index = 0; index < chunks.length; index += 1) assert.equal(out[index], chunks[index]);
+  assert.equal(llm.calls.length, 0);
+  assert.equal(harness.events("crisp_optimize_started").length, 0);
+  assert.ok(
+    harness.activation()[0].warnings.some((warning) => warning.includes('only applies with mode "guard"')),
+  );
 });

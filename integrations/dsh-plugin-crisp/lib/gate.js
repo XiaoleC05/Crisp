@@ -25,6 +25,7 @@ import path from "node:path";
 import {
   CRITIC_HARNESS,
   DEFAULT_REWRITE_INSTRUCTION,
+  DELIVERY_OPTIMIZE,
   MODE_GUARD,
   MODE_OBSERVE,
   resolveConfig,
@@ -32,6 +33,7 @@ import {
 import { checkAnswer, spawnCheckTextRunner } from "./crisp.js";
 import { createHarnessCritic, materialBlock } from "./harness-critic.js";
 import { createLogger } from "./log.js";
+import { createOptimizer } from "./optimizer.js";
 
 /** How many turns a session's rewrite memory keeps before dropping the oldest. */
 const REMEMBERED_TURNS = 64;
@@ -206,6 +208,16 @@ export function createGate(ctx, rawConfig, deps = {}) {
     config.critic === CRITIC_HARNESS
       ? createHarnessCritic({ config, getLlm, deps: { now: deps.now } })
       : null;
+  // Pre-delivery optimize mode: only the guard+optimize combination activates
+  // it. When the optimizer route is incomplete the gate still buffers and
+  // reviews (so the logs stay honest) but replays the original answer instead
+  // of rewriting it; resolveConfig already recorded activation warnings.
+  const optimizeRequested = config.delivery === DELIVERY_OPTIMIZE && config.mode === MODE_GUARD;
+  const optimizeAvailable =
+    optimizeRequested && config.optimizerProvider !== "" && config.optimizerModel !== "";
+  const optimizer = optimizeAvailable
+    ? createOptimizer({ config, getLlm, deps: { now: deps.now } })
+    : null;
 
   /** @type {Map<string, object>} per-session turn/guard state */
   const states = new Map();
@@ -452,30 +464,38 @@ export function createGate(ctx, rawConfig, deps = {}) {
     };
   }
 
-  async function evaluate(state, acc) {
+  /**
+   * Review one completed attempt: eligibility prechecks, the configured critic,
+   * and the crisp_quality_check record. Shared by stream delivery (which turns a
+   * block into a followup rewrite) and optimize delivery (which turns a block
+   * into a pre-delivery streamed rewrite). No delivery decision is taken here.
+   *
+   * @returns {{ok: false} | {ok: true, text: string, runes: number, outcome: object}}
+   */
+  async function reviewAnswer(state, acc) {
     // A step that called a tool is not a delivered answer; silently skip it.
-    if (acc.hasToolCall()) return;
+    if (acc.hasToolCall()) return { ok: false };
     const finishKind = acc.finishKind();
     if (finishKind !== "stop") {
       logSkip(state, finishKind === undefined || finishKind === null ? "missing_finish" : `finish_${finishKind}`, {
         finish: finishKind ?? null,
       });
-      return;
+      return { ok: false };
     }
     const text = acc.text();
     const trimmed = text.trim();
     const runes = countRunes(trimmed);
     if (trimmed === "") {
       logSkip(state, "empty_answer");
-      return;
+      return { ok: false };
     }
     if (runes < config.minRunes) {
       logSkip(state, "short_answer", { answer_runes: runes, min_runes: config.minRunes });
-      return;
+      return { ok: false };
     }
     if (runes > config.maxRunes) {
       logSkip(state, "answer_too_large", { answer_runes: runes, max_runes: config.maxRunes });
-      return;
+      return { ok: false };
     }
 
     const outcome =
@@ -490,9 +510,19 @@ export function createGate(ctx, rawConfig, deps = {}) {
       ...outcome,
       ...(config.critic === CRITIC_HARNESS ? { critic: CRITIC_HARNESS } : {}),
     });
+    return { ok: true, text, runes, outcome };
+  }
 
+  /** Stream delivery: one followup rewrite per blocked completed turn. */
+  async function evaluate(state, acc) {
+    const reviewed = await reviewAnswer(state, acc);
+    if (!reviewed.ok) return;
+    const outcome = reviewed.outcome;
     if (config.mode !== MODE_GUARD || outcome.fail_open || outcome.decision !== "block") return;
-    requestRewrite(state, { answerRunes: runes, reasonType: outcome.reason_type || null });
+    requestRewrite(state, {
+      answerRunes: reviewed.runes,
+      reasonType: outcome.reason_type || null,
+    });
   }
 
   /** Handle one durable session event; only turn boundaries matter here. */
@@ -530,12 +560,229 @@ export function createGate(ctx, rawConfig, deps = {}) {
    * @param {() => AsyncIterable<object>} next downstream chain
    * @returns {AsyncIterable<object>} the downstream stream, unchanged chunks
    */
+  /**
+   * Buffered pre-delivery delivery: consume the whole original answer without
+   * yielding, review it, then replay the original chunks unchanged on pass /
+   * fail-open / ineligibility, or stream ONE optimizer rewrite on a material
+   * block. No followup turn is queued in this mode.
+   */
+  function wrapOptimizeStream(options, next, sessionId, state) {
+    return (async function* optimized() {
+      const buffered = [];
+      const acc = createAccumulator();
+      let upstreamFailure;
+      try {
+        for await (const chunk of next()) {
+          buffered.push(chunk);
+          acc.push(chunk);
+        }
+      } catch (error) {
+        upstreamFailure = error;
+      }
+      if (upstreamFailure !== undefined) {
+        // Match the un-wrapped failure shape: deliver the per-chunk prefix we
+        // saw, then rethrow the original error.
+        for (const chunk of buffered) yield chunk;
+        throw upstreamFailure;
+      }
+      function* replay() {
+        for (const chunk of buffered) yield chunk;
+      }
+      if (disposed) {
+        yield* replay();
+        return;
+      }
+
+      let reviewed;
+      try {
+        if (!(await isAgentLoopRequest(options))) {
+          yield* replay();
+          return;
+        }
+        reviewed = await reviewAnswer(state, acc);
+      } catch (error) {
+        log({
+          event: "crisp_quality_error",
+          mode: config.mode,
+          session_id: sessionId,
+          phase: "after_stream",
+          error: messageOf(error),
+        });
+        yield* replay();
+        return;
+      }
+      if (!reviewed.ok) {
+        yield* replay();
+        return;
+      }
+      const outcome = reviewed.outcome;
+      if (outcome.fail_open || outcome.decision !== "block") {
+        yield* replay();
+        return;
+      }
+      if (!optimizeAvailable || optimizer === null) {
+        yield* replay();
+        return;
+      }
+
+      const started = Date.now();
+      log({
+        event: "crisp_optimize_started",
+        mode: config.mode,
+        delivery: DELIVERY_OPTIMIZE,
+        session_id: sessionId,
+        turn: state.currentTurn,
+        answer_runes: reviewed.runes,
+        reason_type: outcome.reason_type || null,
+        provider: config.optimizerProvider,
+        model: config.optimizerModel,
+        reasoning_effort: config.optimizerReasoningEffort,
+        timeout_ms: config.optimizerTimeoutMs,
+      });
+      let session;
+      try {
+        session = optimizer.open({ answer: reviewed.text });
+      } catch (error) {
+        log({
+          event: "crisp_optimize_error",
+          mode: config.mode,
+          delivery: DELIVERY_OPTIMIZE,
+          session_id: sessionId,
+          turn: state.currentTurn,
+          phase: "start",
+          error: messageOf(error),
+        });
+        yield* replay();
+        return;
+      }
+
+      // Hold chunks back until the rewrite produces visible text, so a rewrite
+      // with no visible output can still be replaced by the original answer.
+      const before = [];
+      let streaming = false;
+      let yielded = 0;
+      let finishKind;
+      try {
+        for await (const chunk of session.chunks) {
+          if (chunk && chunk.type === "finish") finishKind = chunk.reason?.kind ?? "missing";
+          if (streaming) {
+            yield chunk;
+            yielded += 1;
+            continue;
+          }
+          const firstVisible =
+            chunk && chunk.type === "text-delta" && typeof chunk.text === "string" && chunk.text !== "";
+          if (!firstVisible) {
+            before.push(chunk);
+            continue;
+          }
+          for (const pending of before) {
+            yield pending;
+            yielded += 1;
+          }
+          before.length = 0;
+          streaming = true;
+          yield chunk;
+          yielded += 1;
+        }
+      } catch (error) {
+        log({
+          event: "crisp_optimize_error",
+          mode: config.mode,
+          delivery: DELIVERY_OPTIMIZE,
+          session_id: sessionId,
+          turn: state.currentTurn,
+          phase: yielded > 0 ? "mid_stream" : "start",
+          yielded_chunks: yielded,
+          error: messageOf(error),
+        });
+        if (yielded === 0) {
+          yield* replay();
+          return;
+        }
+        if (finishKind === undefined) {
+          // Part of the rewrite was already shown: never append the original
+          // (that would duplicate content). Terminate with a protocol error
+          // finish so the loop settles the attempt instead of the message.
+          yield {
+            type: "finish",
+            reason: {
+              kind: "error",
+              failure: { code: "CRISP_OPTIMIZE_ERROR", message: messageOf(error) },
+            },
+          };
+        }
+        return;
+      } finally {
+        session.dispose?.();
+      }
+
+      const snapshot = typeof session.result === "function" ? session.result() : {};
+      const rewriteText = typeof snapshot.visibleText === "string" ? snapshot.visibleText : "";
+      const finalKind = finishKind ?? snapshot.finishKind;
+      if (rewriteText.trim() === "") {
+        log({
+          event: "crisp_optimize_error",
+          mode: config.mode,
+          delivery: DELIVERY_OPTIMIZE,
+          session_id: sessionId,
+          turn: state.currentTurn,
+          phase: "empty_rewrite",
+          yielded_chunks: yielded,
+          finish: finalKind ?? null,
+          error: "rewrite produced no visible text",
+        });
+        if (yielded === 0) {
+          yield* replay();
+          return;
+        }
+        return;
+      }
+      if (finalKind !== "stop") {
+        log({
+          event: "crisp_optimize_error",
+          mode: config.mode,
+          delivery: DELIVERY_OPTIMIZE,
+          session_id: sessionId,
+          turn: state.currentTurn,
+          phase: finalKind === undefined || finalKind === null ? "missing_finish" : `finish_${finalKind}`,
+          yielded_chunks: yielded,
+          error: snapshot.failureMessage ?? null,
+        });
+        if (yielded === 0) {
+          yield* replay();
+          return;
+        }
+        return;
+      }
+      log({
+        event: "crisp_optimize_applied",
+        mode: config.mode,
+        delivery: DELIVERY_OPTIMIZE,
+        session_id: sessionId,
+        turn: state.currentTurn,
+        answer_runes: reviewed.runes,
+        rewrite_runes: countRunes(rewriteText.trim()),
+        latency_ms: Date.now() - started,
+        optimizer_latency_ms:
+          typeof snapshot.latencyMs === "number" && Number.isFinite(snapshot.latencyMs)
+            ? snapshot.latencyMs
+            : null,
+        tokens: typeof snapshot.tokens === "number" ? snapshot.tokens : null,
+        reason_type: outcome.reason_type || null,
+        provider: config.optimizerProvider,
+        model: config.optimizerModel,
+      });
+    })();
+  }
+
   function wrapStream(options, next) {
     if (disposed || !config.enabled) return next();
     if (typeof next !== "function") return next;
     if (!looksLikeAgentRequest(options)) return next();
     const sessionId = String(options.sessionId);
     const state = stateFor(sessionId);
+    if (optimizeRequested) return wrapOptimizeStream(options, next, sessionId, state);
 
     return (async function* wrapped() {
       const acc = createAccumulator();
@@ -601,6 +848,16 @@ export function createGate(ctx, rawConfig, deps = {}) {
             critic_model: config.criticModel,
             critic_reasoning_effort: config.criticReasoningEffort,
             critic_timeout_ms: config.criticTimeoutMs,
+          }
+        : {}),
+      ...(optimizeRequested
+        ? {
+            delivery: DELIVERY_OPTIMIZE,
+            optimize_available: optimizeAvailable,
+            optimizer_provider: config.optimizerProvider,
+            optimizer_model: config.optimizerModel,
+            optimizer_reasoning_effort: config.optimizerReasoningEffort,
+            optimizer_timeout_ms: config.optimizerTimeoutMs,
           }
         : {}),
       warnings: config.warnings,

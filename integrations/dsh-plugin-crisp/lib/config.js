@@ -51,6 +51,24 @@ export const HARNESS_CRITIC_MAX_TOKENS = 1024;
 export const HARNESS_CRITIC_TEMPERATURE = 0;
 
 /**
+ * Delivery modes.
+ * - `stream` (default, historical behavior): chunks are yielded as they arrive;
+ *   guard mode queues a followup rewrite as an extra turn.
+ * - `optimize` (opt-in, only with mode "guard"): the original answer is
+ *   buffered, reviewed before delivery, and on a material block replaced by ONE
+ *   streamed rewrite generated through ctx.llm -- no extra visible turn.
+ */
+export const DELIVERY_STREAM = "stream";
+export const DELIVERY_OPTIMIZE = "optimize";
+export const DELIVERIES = Object.freeze([DELIVERY_STREAM, DELIVERY_OPTIMIZE]);
+
+/** Optimizer bounds for delivery:"optimize". */
+export const DEFAULT_OPTIMIZER_TIMEOUT_MS = 30_000;
+export const MIN_OPTIMIZER_TIMEOUT_MS = 1_000;
+export const MAX_OPTIMIZER_TIMEOUT_MS = 120_000;
+export const DEFAULT_OPTIMIZER_REASONING_EFFORT = "off";
+
+/**
  * Byte-for-byte the rewrite instruction from internal/policy/decision.go
  * (`policy.RewriteReason`). Keep it identical: the rewrite must ask for a
  * complete non-redundant answer, never for a shorter one.
@@ -255,6 +273,43 @@ export function resolveConfig(raw, env = process.env, platform = process.platfor
     warnings.push(`criticTimeoutMs clamped to ${criticTimeoutMs}`);
   }
 
+  // Delivery mode. Existing deployments keep `stream`; `optimize` is opt-in
+  // and only meaningful together with guard mode (it replaces the followup
+  // rewrite with one pre-delivery streamed rewrite).
+  let delivery = nonEmptyString(input.delivery) ?? DELIVERY_STREAM;
+  delivery = delivery.toLowerCase();
+  if (!DELIVERIES.includes(delivery)) {
+    warnings.push(`unknown delivery ${JSON.stringify(delivery)}; falling back to ${DELIVERY_STREAM}`);
+    delivery = DELIVERY_STREAM;
+  }
+  const optimizerProvider = nonEmptyString(input.optimizerProvider) ?? "";
+  const optimizerModel = nonEmptyString(input.optimizerModel) ?? "";
+  let optimizerReasoningEffort =
+    nonEmptyString(input.optimizerReasoningEffort) ?? DEFAULT_OPTIMIZER_REASONING_EFFORT;
+  optimizerReasoningEffort = optimizerReasoningEffort.toLowerCase();
+  if (!CRITIC_REASONING_EFFORTS.includes(optimizerReasoningEffort)) {
+    warnings.push(
+      `unknown optimizerReasoningEffort ${JSON.stringify(optimizerReasoningEffort)}; falling back to ${DEFAULT_OPTIMIZER_REASONING_EFFORT}`,
+    );
+    optimizerReasoningEffort = DEFAULT_OPTIMIZER_REASONING_EFFORT;
+  }
+  const optimizerTimeoutMs = clamp(
+    asNumber(input.optimizerTimeoutMs, DEFAULT_OPTIMIZER_TIMEOUT_MS),
+    MIN_OPTIMIZER_TIMEOUT_MS,
+    MAX_OPTIMIZER_TIMEOUT_MS,
+  );
+  if (asNumber(input.optimizerTimeoutMs, DEFAULT_OPTIMIZER_TIMEOUT_MS) !== optimizerTimeoutMs) {
+    warnings.push(`optimizerTimeoutMs clamped to ${optimizerTimeoutMs}`);
+  }
+  if (delivery === DELIVERY_OPTIMIZE && mode !== MODE_GUARD) {
+    warnings.push(`delivery "${DELIVERY_OPTIMIZE}" only applies with mode "${MODE_GUARD}"; using stream delivery`);
+  }
+  if (delivery === DELIVERY_OPTIMIZE && (optimizerProvider === "" || optimizerModel === "")) {
+    warnings.push(
+      `delivery "${DELIVERY_OPTIMIZE}" needs optimizerProvider and optimizerModel; the original answer will be replayed without a rewrite`,
+    );
+  }
+
   return {
     pluginVersion: PLUGIN_VERSION,
     enabled,
@@ -270,6 +325,11 @@ export function resolveConfig(raw, env = process.env, platform = process.platfor
     criticModel,
     criticReasoningEffort,
     criticTimeoutMs,
+    delivery,
+    optimizerProvider,
+    optimizerModel,
+    optimizerReasoningEffort,
+    optimizerTimeoutMs,
     envPassthrough: normalizePassthrough(input.envPassthrough),
     env: optionEnv,
     warnings,

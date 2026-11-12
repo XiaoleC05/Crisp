@@ -55,7 +55,7 @@ Push-Location integrations/dsh-plugin-crisp; node --test; Pop-Location   # 57 te
 Push-Location integrations/opencode-crisp;  node --test; Pop-Location   # 51 tests
 ```
 
-本次复跑结果：Go 测试全部通过、hookreplay 12/12、DSH 57/57、opencode 51/51。真实的 Codex / Claude Code E2E 需要对应 CLI；脚本在 CLI 缺失时打印 `SKIPPED` 并以 0 退出：
+本次复跑结果：Go 测试全部通过、hookreplay 12/12、DSH 109/109、opencode 51/51。真实的 Codex / Claude Code E2E 需要对应 CLI；脚本在 CLI 缺失时打印 `SKIPPED` 并以 0 退出：
 
 ```powershell
 pwsh -File scripts/e2e-codex.ps1            # -? 查看参数：-CodexPath -SkipBuild -SkipReplay -ScenarioTimeoutSec -WorkRoot

@@ -188,6 +188,15 @@ export function criticChunks(verdict, options = {}) {
   return chunks;
 }
 
+/** Build one optimizer rewrite chunk stream (block + text + optional usage + finish). */
+export function rewriteChunks(text, options = {}) {
+  const chunks = [{ type: "block-start", index: 0, blockType: "text" }];
+  chunks.push(...textChunks(text));
+  if (options.usage) chunks.push({ type: "usage", usage: options.usage });
+  chunks.push({ type: "finish", reason: options.finish ?? { kind: "stop" } });
+  return chunks;
+}
+
 /** Build text-delta chunks for one block. */
 export function textChunks(text, { index = 0, size = 17 } = {}) {
   const chunks = [];

@@ -229,12 +229,20 @@ export function createStatusService(ctx, rawConfig, deps = {}) {
         config: {
           enabled: config.enabled,
           mode: config.mode,
+          delivery: config.delivery,
           maxRunes: config.maxRunes,
           minRunes: config.minRunes,
           logFile: config.logFile === false ? null : config.logFile,
           binaryPath: config.binaryPath,
           warnings: config.warnings,
           critic,
+          optimizer: {
+            provider: config.optimizerProvider,
+            model: config.optimizerModel,
+            reasoningEffort: config.optimizerReasoningEffort,
+            timeoutMs: config.optimizerTimeoutMs,
+            configured: config.optimizerProvider !== "" && config.optimizerModel !== "",
+          },
         },
         log: {
           exists: log.exists,

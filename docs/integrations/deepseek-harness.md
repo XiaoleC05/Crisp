@@ -2,8 +2,9 @@
 
 Status: **installable Host + Web bundle, verified on the installed DeepSeek
 Harness 0.2.2-rc.1 (Windows, Node.js v22.19.0): real `desktop` profile, real
-DeepSeek-V4.1-Flash HTTP Critic with thinking disabled, and the Web left-sidebar
-status page in a headless browser.** The bundle lives at
+DeepSeek-V4.1-Flash HTTP Critic with thinking disabled, a live pre-delivery
+optimize rewrite (no extra turn), and the Web left-sidebar status page in a
+headless browser.** The bundle lives at
 [integrations/dsh-plugin-crisp/](../../integrations/dsh-plugin-crisp/) and is
 registered by its own `cordis.patch.yml`; the Web half is declared by
 `dsh.client` in the same `package.json`.
@@ -14,7 +15,7 @@ the repository: [scripts/e2e-dsh.ps1](../../scripts/e2e-dsh.ps1) runs the real
 `dsh` launcher headless against committed local protocol mocks
 ([test/e2e/mockmessages](../../test/e2e/mockmessages/main.go) and
 [test/e2e/mockcritic](../../test/e2e/mockcritic/main.go)). Real-provider and
-live-Web measurements are recorded in sections 6.3 and 6.5.
+live-Web measurements are recorded in sections 6.3, 6.5 and 6.6.
 
 ---
 
@@ -37,8 +38,12 @@ a DeepSeek Harness Host plugin.
   (default) or the **Harness's own signed-in model** through `ctx.llm`
   (`critic: harness`, e.g. DeepSeek-V4.1-Flash with thinking off). See
   [Critic modes](#critic-modes).
+- Together with guard mode, **`delivery: optimize`** can rewrite a material
+  answer **before delivery** (one extra `ctx.llm` call) and stream the rewritten
+  answer as the only visible answer. No extra turn is created. See
+  [Delivery modes](#delivery-modes).
 - The bundle also contributes a **Web UI left-sidebar entry** ("输出优化" in
-Chinese, "Quality gate" in English) that opens a standalone status page: current mode, critic
+Chinese, "Crisp" in English) that opens a standalone status page: current mode, critic
   model/capabilities, today's counters, average critic latency, and the latest
   20 checks read from the local JSONL log. The Host half serves that page's data
   as `GET /crisp/status`; no answer text or credentials are exposed. See
@@ -114,6 +119,14 @@ Why this shape:
   bundle independent of the Harness schemastery version. A bad value falls back
   to a safe default and is reported in the activation record's `warnings`.
 
+The **optimizer** (`lib/optimizer.js`) is used only by
+`delivery: optimize` + `mode: guard`. It is a pre-delivery editor: the gate
+buffers the original answer, reviews it, and on a material block asks the
+signed-in Harness model for exactly one full rewrite; only the rewrite is
+delivered, and its chunks are streamed as they arrive. The optimizer request
+carries `purpose: "crisp-optimize"` and **no `sessionId`**, so the gate's own
+stream wrapper never treats it as an agent answer and cannot recurse.
+
 The **Web half** (`client.js`) is a separate plain browser bundle declared with
 `"dsh.client": { "platform": "web", "immediately": true }` and no Harness
 client-package imports. It registers a `sidebar.panellist` entry and a keyed
@@ -134,9 +147,10 @@ running the gate unchanged.
 | `integrations/dsh-plugin-crisp/lib/config.js` | defensive config, child-env allowlist, default binary resolution |
 | `integrations/dsh-plugin-crisp/lib/log.js` | one JSON line per event to `logFile` or stderr |
 | `integrations/dsh-plugin-crisp/lib/status.js` | read-only `GET /crisp/status` snapshot: sanitized config, counters, latest checks |
+| `integrations/dsh-plugin-crisp/lib/optimizer.js` | pre-delivery editor prompt + one streaming rewrite through `ctx.llm` (optimize delivery only) |
 | `integrations/dsh-plugin-crisp/client.js` | Web half: left-sidebar entry + standalone status page (React from the module loader) |
 | `integrations/dsh-plugin-crisp/locale/{en,zh}.json`, `icon.svg` | Plugin Manager display metadata and original icon |
-| `integrations/dsh-plugin-crisp/test/` | 87 hermetic `node:test` tests (fake ctx, runner, child and status log fixtures) |
+| `integrations/dsh-plugin-crisp/test/` | 109 hermetic `node:test` tests (fake ctx, runner, child, optimizer stream and status log fixtures) |
 
 The end-to-end reproduction harness is committed too:
 `scripts/e2e-dsh.ps1` (PowerShell 7) drives the real launcher and asserts the
@@ -316,7 +330,8 @@ is defaulted defensively at activation:
 | Field | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master switch; `CRISP_DSH_DISABLE=1` also disables it. |
-| `mode` | `observe` | `observe` = check + log only. `guard` = also queue one rewrite followup on a material block. |
+| `mode` | `observe` | `observe` = check + log only. `guard` = act on a material block (see `delivery`). |
+| `delivery` | `stream` | Guard delivery strategy: `stream` = pass chunks through and queue one visible followup rewrite; `optimize` = buffer before delivery, then replay the original or stream one invisible rewrite. Ignored outside guard. |
 | `binaryPath` | checkout `bin/crisp.exe`, then `CRISP_BIN`, then `crisp` | Crisp executable. |
 | `timeoutMs` | `30000` | Hard bound for one check (clamped 1000–120000). Keep it above the binary's own `QUALITY_GATE_TOTAL_TIMEOUT_MS` budget (default 25 s). |
 | `minRunes` | `40` | Visible answers shorter than this many code points are not checked (the Go core's own 120-rune Critic threshold still applies inside the binary). |
@@ -330,6 +345,10 @@ is defaulted defensively at activation:
 | `criticModel` | `""` | Harness mode only: model id, e.g. `deepseek-flash`. Required for `critic: harness`. |
 | `criticReasoningEffort` | `off` | Harness mode only: `off` / `low` / `high` / `max`; anything else falls back to `off`. |
 | `criticTimeoutMs` | `15000` | Harness mode only: bound for the critic model call (clamped 1000–30000). |
+| `optimizerProvider` | `""` | Optimize delivery only: Harness LLM provider id for the rewrite, e.g. `deepseek-account`. Required for optimize; without it the original answer is replayed. |
+| `optimizerModel` | `""` | Optimize delivery only: model id for the rewrite, e.g. `deepseek-flash`. |
+| `optimizerReasoningEffort` | `off` | Optimize delivery only: `off` / `low` / `high` / `max`; anything else falls back to `off`. |
+| `optimizerTimeoutMs` | `30000` | Optimize delivery only: hard bound for the rewrite call (clamped 1000–120000). |
 
 Example (override in the profile's own `cordis.patch.yml`, or in a `--patch`
 overlay): a matching override replaces the whole config, so restate what you keep.
@@ -432,9 +451,57 @@ the fields you keep):
 In harness mode a `crisp_quality_check` record additionally carries
 `"critic":"harness"`; all other fields are the same as the HTTP mode.
 
+### Delivery modes
+
+`mode: guard` has two delivery strategies; rules and the critic decision are
+identical.
+
+**`stream` (default).** Chunks pass through unchanged. After a material block
+the plugin queues exactly one visible `agent.followup` rewrite turn. Streaming
+is preserved; the reader sees the original answer first and the rewrite as an
+extra turn.
+
+**`optimize` (opt-in).** The plugin buffers the whole candidate answer before
+yielding anything:
+
+- pass / fail-open / ineligible (tool-call step, non-stop finish, short/large):
+  replay the original chunks unchanged and in order. The answer appears all at
+  once; live token streaming for that answer is lost.
+- material block: discard the original chunks, call the signed-in Harness model
+  once through `ctx.llm.stream` with the editor prompt + `rewriteInstruction`,
+  and **stream only the rewrite chunks** as they arrive. The reader never sees
+  the original answer or an extra turn; the durable assistant message is the
+  rewritten answer.
+- The rewrite request carries `purpose: "crisp-optimize"` and **no
+  `sessionId`**, so it cannot be gated or recursively optimized.
+- Fail-open: optimizer unavailable/timeout/empty rewrite before any output →
+  replay the original answer. A mid-rewrite failure after partial output ends
+  the attempt with a `CRISP_OPTIMIZE_ERROR` finish instead of appending the
+  original (avoids duplicate content).
+- Cost: every optimized answer pays the critic round-trip and loses live
+  streaming on the pass path; a blocked answer pays one extra generation.
+  Bounded by `optimizerTimeoutMs`.
+
+```yaml
+- id: crisp-quality-gate
+  config:
+    mode: guard
+    delivery: optimize
+    critic: http
+    env:
+      QUALITY_GATE_BASE_URL: 'https://api.deepseek.com/v1'
+      QUALITY_GATE_MODEL: 'deepseek-flash'
+      QUALITY_GATE_API_KEY: 'sk-...'
+      QUALITY_GATE_EXTRA_BODY_JSON: '{"thinking":{"type":"disabled"}}'
+    optimizerProvider: "deepseek-account"
+    optimizerModel: "deepseek-flash"
+    optimizerReasoningEffort: "off"
+    optimizerTimeoutMs: 30000
+```
+
 ### Left-sidebar status page
 
-The Web half adds a **输出优化 / Quality gate** entry to the left sidebar. It
+The Web half adds a **输出优化 / Crisp** entry to the left sidebar. It
 opens a standalone main-area page (a keyed `main` panel), not a second
 conversation surface; **返回对话 / Back to chat** returns to the current
 conversation.
@@ -476,6 +543,11 @@ One JSON object per line, plugin tag `crisp-quality-gate`:
   `agent_unavailable`, `followup_unavailable`.
 - `crisp_guard_error` / `crisp_quality_error` — contained failures; never thrown
   into the agent run.
+- `crisp_optimize_started` / `crisp_optimize_applied` (optimize delivery only) —
+  one pre-delivery rewrite started/applied, with original/rewrite runes,
+  latency, tokens, provider/model.
+- `crisp_optimize_error` — rewrite could not start, timed out, produced no text,
+  or failed mid-stream; the phase records where.
 
 No record contains answer text, user content, or credentials. The Web status
 page reads this same file (bounded tail) and therefore shows exactly the records
@@ -489,6 +561,11 @@ rule evidence) to the configured OpenAI-compatible service — the same boundary
 as the Codex integration in the project README. The child does **not** receive
 the Harness process environment wholesale; only the allowlisted / passthrough
 variables are forwarded.
+
+In `delivery: optimize`, the original answer is also sent to the signed-in
+Harness model for the rewrite (one extra model call; same provider boundary as
+the conversation). Neither the optimizer prompt nor the rewritten text is
+written to the gate log or the status page.
 
 The Web status page adds a local-only read boundary: its Host route reads the
 JSONL log and a sanitized configuration summary, and the browser page only
@@ -564,15 +641,17 @@ cd integrations/dsh-plugin-crisp
 node --test "test/*.test.js"
 ```
 
-Result: **87/87 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
+Result: **109/109 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
 child-env filtering; decision parsing; spawn success/error/exit/kill; all
 fail-open paths; stream pass-through identity; visible-text accumulation
 (reasoning excluded, block-end fallback); tool-call and non-stop skips;
 minRunes; agent-request detection; guard followup once per turn, rewrite-turn
-suppression, no-turn/agent-unavailable/refusing-followup paths;
-manifest/patch/locale/icon contract; Web client manifest, client registrations
-and status payload/key non-disclosure; rewrite instruction equality with
-`internal/policy/decision.go`.
+suppression, no-turn/agent-unavailable/refusing-followup paths; optimize pass
+replay identity/order, rewrite-only delivery, streaming-before-completion,
+optimizer start/empty/mid-stream failure and missing-config fallbacks,
+recursion guard; manifest/patch/locale/icon contract; Web client manifest,
+client registrations and status payload/key non-disclosure; rewrite instruction
+equality with `internal/policy/decision.go`.
 
 ### 6.3 Additional one-off measurements during integration development
 
@@ -618,6 +697,7 @@ one-off measurements:
   `critic_latency_ms:865`, `critic_tokens:1794`); the active desktop config
   now uses the HTTP critic above.
 - **Web left-sidebar page.** See section 6.5.
+- **Pre-delivery optimize rewrite.** See section 6.6.
 
 ### 6.4 Guard flow measured numbers
 
@@ -664,33 +744,57 @@ Measured on the installed `desktop` profile (Harness 0.2.2-rc.1) on 2026-11-13:
    captured from that session.
 
 Not covered here: a reader who keeps the page open across a plugin update (Web
-client bundles load on the next page render, so a refresh is required) and guard
-rewrites triggered from a live desktop conversation (no material block occurred
-while observing).
+client bundles load on the next page render, so a refresh is required). A live
+pre-delivery rewrite was verified separately in section 6.6.
 
-### 6.6 What remains unverified
+### 6.6 Pre-delivery optimize rewrite — PASS (live)
+
+Measured on the installed `desktop` profile on 2026-11-13. A real conversation
+was asked to produce a repetitive, padded answer explicitly for this test:
+
+1. `crisp_quality_check` recorded `decision:"block"`, `reason_type:"filler"`,
+   `answer_runes:258`, critic called.
+2. `crisp_optimize_started`, then `crisp_optimize_applied` about 2 s later:
+   `answer_runes:258` → `rewrite_runes:120`, `tokens:540`,
+   `delivery:"optimize"`, `provider:"deepseek-account"`,
+   `model:"deepseek-flash"`.
+3. The delivered message in that session was the rewritten answer; there was no
+   `crisp_guard_followup` and no extra visible turn/user message.
+4. Incremental UI streaming of the rewrite was not measured in the headless
+   check; the hermetic optimizer tests prove that rewrite chunks are yielded
+   while the fake rewrite call is still suspended.
+
+Tradeoff remains: optimize buffers every candidate answer, so **pass-path
+answers lose live token streaming** (they appear at once after generation +
+critic). Only the rewritten answer is streamed, and only after the original was
+generated and reviewed.
+
+### 6.7 What remains unverified
 
 | Claim | Status |
 |---|---|
 | `plugin_manager install_bundle` path | **Not executed** (tool unavailable in the verification environment; user profile untouched). Documented from shipped docs. |
-| Full rewrite on the user's real profile / long-lived Web/TUI surface | **Not executed.** Guard followup was verified through the headless runner by the committed harness; the session-event and followup APIs used are the same, but no GUI session was driven. |
 | Rendering of the plugin's title/description/icon in Plugin Manager | **Not executed** (no plugin-manager tool). Locale JSON, exports, and SVG validity are covered by contract tests only. |
-| Full rewrite triggered from a live desktop conversation | **Not executed.** The guard followup ran in the headless E2E; the installed profile has not seen a material block yet, so no live rewrite turn was observed. |
+| Incremental UI rendering of the streamed rewrite | **Not measured.** The live test confirms the final delivered text and logs; per-token rendering was not observed in the headless browser. |
 | Left-sidebar page across a plugin update without a page refresh | **Not supported/verified.** Web client bundles are part of the page's module graph; reload the page after updating the bundle. |
 | A live `critic: harness` call on the signed-in `deepseek-account` route | **Verified once** in the live desktop profile(`critic_pass`, 865 ms, 1794 tokens, `fail_open:false`); the active desktop config now uses the external HTTP critic instead. The harness path remains covered by hermetic unit tests and the scratch headless E2E. |
 | `@deepseek-ai/dsh-llm-replay` headless replay | **Blocked:** the package is not shipped in this installation's `app.asar` (checked by listing; only the source-checkout catalog mentions it). The committed Messages mock is used instead. |
-| Other DSH versions, non-Windows platforms, paths with spaces | **Not verified.** The harness derives the plugin path from the repository and needs an installed `dsh`; it was measured only against 0.2.1-rc.5 on Windows. |
+| Other DSH versions, non-Windows platforms, paths with spaces | **Not verified.** The committed harness measured 0.2.1-rc.5; the live desktop checks used 0.2.2-rc.1 on Windows. Other versions/platforms remain unverified. |
 | Which detector branch ran in the E2E (lazy marker import vs `purpose`/`sessionId` fallback) | **Not observed.** Both produce the same decision; titles/compaction are filtered by `purpose` regardless. |
 
 ---
 
 ## 7. Limitations and design notes
 
-1. **No hard pre-delivery block.** Chunks are passed through to preserve token
-   streaming, so the answer becomes visible to the user before the check can
-   finish. `observe` only logs; `guard` asks for a repair as the next turn.
-   A hard block would require buffering the whole answer (losing first-token
-   latency), and even then already-rendered chunks cannot be un-delivered.
+1. **Delivery strategy tradeoff.** In the default `delivery: stream`, chunks pass
+   through live, so the original answer is visible before the check finishes;
+   `guard` then asks for a repair as a visible extra turn. With
+   `delivery: optimize`, the gate buffers the whole answer before delivery:
+   pass answers lose live token streaming (they appear at once after generation
+   + critic), while a material block produces one pre-delivery rewrite whose
+   chunks stream to the reader after the original finished generating. There is
+   no way to stream the original and silently replace it later; buffering is the
+   cost of a no-extra-turn rewrite.
 2. **End-of-turn latency.** The check runs after the terminal chunk and before
    the wrapper reports completion; the durable assistant-message commit waits
    for it (bounded by `timeoutMs`). Rule-only checks are sub-millisecond in the

@@ -21,7 +21,7 @@ window.__ModuleLoader__.load({
     const zh = {
       panel: "输出优化",
       title: "Crisp 输出优化",
-      subtitle: "对每条最终回答做确定性规则检查 + LLM 语义审查；guard 模式会在 material 问题时要求一次完整重写。",
+      subtitle: "对每条最终回答做规则与语义检查；命中 material 问题时在交付前重写，用户只看到优化后的版本。",
       back: "返回对话",
       refresh: "刷新",
       refreshAria: "刷新质量门禁状态",
@@ -31,8 +31,10 @@ window.__ModuleLoader__.load({
       statusOn: "运行中",
       statusOff: "已停用",
       mode: "当前模式",
-      modeGuard: "拦截并请求一次重写",
+      modeGuard: "命中 material 后追加一轮可见重写",
       modeObserve: "只记录，不影响回答",
+      deliveryOptimize: "交付前优化 · 重写结果流式输出",
+      deliveryStream: "流式输出 · 后置重写",
       critic: "语义审查",
       notConfigured: "未配置",
       thinkingOff: "思考已关闭",
@@ -70,9 +72,9 @@ window.__ModuleLoader__.load({
     };
 
     const en = {
-      panel: "Quality gate",
-      title: "Crisp quality gate",
-      subtitle: "Deterministic rules plus an LLM critic on every final answer; guard mode requests exactly one full rewrite when a material issue is found.",
+      panel: "Crisp",
+      title: "Crisp",
+      subtitle: "Rules and an LLM critic inspect every final answer; material issues are rewritten before delivery, so only the optimized version is shown.",
       back: "Back to chat",
       refresh: "Refresh",
       refreshAria: "Refresh quality gate status",
@@ -82,8 +84,10 @@ window.__ModuleLoader__.load({
       statusOn: "Active",
       statusOff: "Disabled",
       mode: "Mode",
-      modeGuard: "Blocks and requests one rewrite",
+      modeGuard: "Blocks and requests one visible rewrite turn",
       modeObserve: "Records only, never changes answers",
+      deliveryOptimize: "Pre-delivery optimize · rewrite streamed",
+      deliveryStream: "Streaming · post-delivery rewrite",
       critic: "Semantic critic",
       notConfigured: "Not configured",
       thinkingOff: "Thinking off",
@@ -353,6 +357,7 @@ window.__ModuleLoader__.load({
       const warnings = Array.isArray(config.warnings) ? config.warnings : [];
       const locale = chinese ? "zh-CN" : "en-US";
       const mode = typeof config.mode === "string" ? config.mode : "observe";
+      const delivery = typeof config.delivery === "string" ? config.delivery : "stream";
       const enabled = config.enabled !== false;
       const criticModel = typeof critic.model === "string" && critic.model !== "" ? critic.model : t("notConfigured");
       const criticSource = critic.mode === "harness" ? "Harness" : critic.baseURLHost ? "HTTP · " + critic.baseURLHost : "HTTP";
@@ -404,7 +409,12 @@ window.__ModuleLoader__.load({
             h(StatCard, {
               label: t("mode"),
               value: mode.toUpperCase(),
-              hint: mode === "guard" ? t("modeGuard") : t("modeObserve"),
+              hint:
+                mode === "guard"
+                  ? delivery === "optimize"
+                    ? t("deliveryOptimize")
+                    : t("modeGuard")
+                  : t("modeObserve"),
             }),
             h(StatCard, {
               label: t("critic"),

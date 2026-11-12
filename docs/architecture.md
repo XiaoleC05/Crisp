@@ -427,6 +427,6 @@ Crisp 的核心不变量（通用协议第 5 节）：只读 stdin、可选 tran
 - DSH/opencode 无法交付前拦截：原回答保留在历史中，重写是额外 turn，token/延迟成本更高；插件内存 guard 在进程重启后重置。
 - Windows 上 Codex Hook timeout 只丢弃输出、不终止进程；若父进程被强杀可能留下孤立 Hook 进程，生产 Hook 命令应短小且自我限时（Crisp 已满足）。
 - `crisp check-file` 是显式入口，Stop Hook 不会自动扫描磁盘文件。
-- DSH 的 `plugin_manager install_bundle` 路径与 opencode `run` 一次性模式未在本仓库 E2E 中覆盖（见 [deepseek-harness.md](integrations/deepseek-harness.md) 第 6.6 节、[opencode.md](integrations/opencode.md) 第 7.1 节）。
+- DSH 的 `plugin_manager install_bundle` 路径与 opencode `run` 一次性模式未在本仓库 E2E 中覆盖（见 [deepseek-harness.md](integrations/deepseek-harness.md) 第 6.7 节、[opencode.md](integrations/opencode.md) 第 7.1 节）。
 - 插件为本地私有包，未发布到 npm/pnpm registry；安装走仓库路径。
 - 下一步：真实 Critic 一致性测量与阈值/prompt 调参；对完全不支持扩展的 Agent 考虑本地 API Proxy（设计规格中的 Phase 4 fallback）；补充更长技术文档样本以复测重复阈值。

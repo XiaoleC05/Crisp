@@ -137,7 +137,7 @@ timeout 只丢弃 Hook 输出、不终止 Hook 进程。
 - 隔离 scratch profile：`dsh plugin add` 注册 bundle、`--dump-config` 显示插件行、真实 boot 激活。
 - 真实 `dsh headless` guard E2E：缺陷回答 block → 恰好 1 次 `agent.followup` → 重写 turn →
   pass；durable session log 中恰好 1 条重写指令；session-title/compaction 请求不被误检。
-- 插件单测 57/57。
+- 插件单测 109/109（DeepSeek Harness 插件；另含 opencode 51/51）。
 - 复现：`pwsh -File scripts/e2e-dsh.ps1`（需要本机安装 DeepSeek Harness；缺失时 SKIPPED）。
 
 详见 [docs/integrations/deepseek-harness.md](integrations/deepseek-harness.md)。
