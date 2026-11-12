@@ -1,4 +1,6 @@
-# Crisp quality gate — a Host-only plugin bundle row.
+# Crisp quality gate — a Host + Web plugin bundle row.
+# The Web half adds a left-sidebar "质量门禁" entry and a read-only status
+# page served by GET /crisp/status (Host route; browser refresh loads it).
 #
 # Install this bundle into a profile (see docs/integrations/deepseek-harness.md) and the row
 # below is inserted into that profile's effective composition. Change the

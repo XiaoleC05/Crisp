@@ -14,15 +14,21 @@ test("manifest is a private ESM bundle declaring its Cordis patch", () => {
   assert.equal(typeof packageJson.name, "string");
   assert.ok(packageJson.name.startsWith("@local/"));
   assert.equal(packageJson.exports["."], "./index.js");
-  assert.deepEqual(packageJson.dsh, { bundle: { patch: "./cordis.patch.yml" } });
+  assert.deepEqual(packageJson.dsh.bundle, { patch: "./cordis.patch.yml" });
+  assert.equal(packageJson.dsh.client.platform, "web");
+  assert.equal(packageJson.dsh.client.immediately, true);
+  assert.ok(packageJson.dsh.client.inject.includes("@deepseek-ai/dsh-client-ui-sidebar"));
+  assert.ok(packageJson.dsh.client.inject.includes("@deepseek-ai/dsh-client-ui-layout"));
+  assert.equal(packageJson.exports["./client"], "./client.js");
   assert.equal(existsSync(path.join(PACKAGE_DIR, "index.js")), true);
+  assert.equal(existsSync(path.join(PACKAGE_DIR, "client.js")), true);
   assert.equal(existsSync(path.join(PACKAGE_DIR, "cordis.patch.yml")), true);
 });
 
 test("display resources are exported and declared in files", () => {
   assert.equal(packageJson.exports["./icon"], "./icon.svg");
   assert.equal(packageJson.exports["./locale/*.json"], "./locale/*.json");
-  for (const entry of ["index.js", "lib/", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
+  for (const entry of ["index.js", "client.js", "lib/", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
     assert.ok(packageJson.files.includes(entry), `files must include ${entry}`);
   }
 });
@@ -114,6 +120,22 @@ test("the host module exports the apply entry point and no static DSH dependency
   }
   const gateSource = readFileSync(path.join(PACKAGE_DIR, "lib", "gate.js"), "utf8");
   assert.match(gateSource, /import\(\s*["']@deepseek-ai\/dsh-llm["']\s*\)/);
+});
+
+test("the client bundle registers a left-sidebar entry and its main-area page", () => {
+  const source = readFileSync(path.join(PACKAGE_DIR, "client.js"), "utf8");
+  assert.match(source, /window\.__ModuleLoader__\.load\(\{/);
+  assert.match(source, /id: "@local\/crisp-quality-gate"/);
+  assert.match(source, /ctx\.slots\.register/);
+  assert.match(source, /sidebar\.panellist/);
+  assert.match(source, /name: "main"/);
+  assert.match(source, /STATUS_PATH = "\/crisp\/status"/);
+  assert.doesNotMatch(
+    source,
+    /(?:^|\n)\s*import\s[^;]*?from\s+["']@deepseek-ai\//,
+    "client.js must not statically import installation packages",
+  );
+  assert.doesNotMatch(source, /require\(\s*["']@deepseek-ai\//, "client.js must not require installation packages");
 });
 
 test("the guard rewrite instruction matches internal/policy/decision.go", (t) => {

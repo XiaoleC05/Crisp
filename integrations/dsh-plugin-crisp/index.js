@@ -12,6 +12,7 @@
 // The plugin declares no required services: it only listens to events, and
 // resolves ctx.get("agents") lazily when guard mode needs agent.followup().
 import { createGate } from "./lib/gate.js";
+import { createStatusHandler, createStatusService } from "./lib/status.js";
 
 /** Cordis plugin display name used by Loader diagnostics. */
 export const name = "crisp-quality-gate";
@@ -57,6 +58,62 @@ export function applyWithDeps(ctx, config, deps) {
   ctx.on("llm/stream", (options, next) => gate.wrapStream(options, next));
   ctx.on("session/event", (session, event) => gate.onSessionEvent(session, event));
   ctx.on("session/disposed", (session) => gate.forgetSession(session));
+  registerStatusRoute(ctx, config, deps);
   gate.announce();
   return gate;
+}
+
+/**
+ * Resolve the composition's web server lazily. Profiles without the Web UI do
+ * not mount one; the gate itself must keep working there.
+ *
+ * @param {object} ctx Cordis plugin context
+ * @param {object} deps injectable seams
+ * @returns {object|undefined} the webServer service
+ */
+function getWebServer(ctx, deps) {
+  if (typeof deps.getWebServer === "function") {
+    try {
+      return deps.getWebServer();
+    } catch {
+      return undefined;
+    }
+  }
+  try {
+    return ctx.get?.("webServer") ?? ctx.webServer;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Serve the read-only status snapshot used by the Web client's left-sidebar
+ * page. Registration is best-effort: a missing web server (non-Web profiles)
+ * or a route collision must never break the quality gate.
+ *
+ * @param {object} ctx Cordis plugin context
+ * @param {object} config Loader row config
+ * @param {object} deps injectable seams
+ */
+function registerStatusRoute(ctx, config, deps) {
+  const webServer = getWebServer(ctx, deps);
+  if (webServer === undefined || webServer === null || typeof webServer.register !== "function") {
+    return;
+  }
+  try {
+    const service = createStatusService(ctx, config, deps);
+    const handler = createStatusHandler(service, ctx);
+    const register = () => webServer.register({ kind: "exact", path: service.route, handler });
+    if (typeof ctx.effect === "function") {
+      ctx.effect(register, "crisp-quality-gate.status-route()");
+    } else {
+      register();
+    }
+  } catch (error) {
+    try {
+      ctx.logger?.warn?.(error);
+    } catch {
+      // Diagnostics are best-effort; the gate still mounts.
+    }
+  }
 }

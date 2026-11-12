@@ -18,6 +18,11 @@
 - Critic 默认评审偏好改为**结论先行、整体结构化**：铺垫实质性延迟/遮蔽结论或把同一观点拆碎
   才算 material；短回答不因缺少标题被拦截，长而信息密度高的回答不扣分。固定重写指令同步加入
   "先在第一段给出直接结论，再按清晰结构展开"（Go policy、DSH/opencode 插件三处逐字一致）。
+- DSH 插件新增 **Web 左侧栏状态页**：左侧栏「质量门禁」入口打开独立主区页面，展示模式、
+  Critic 模型/思考状态、今日计数、平均延迟与最近 20 条审查记录；Host 半边在存在 `webServer`
+  时注册只读 `GET /crisp/status`（connection 浏览器栅栏、`no-store`、不返回答案文本或
+  API Key），页面每 5 秒自动刷新。已在 Harness 0.2.2-rc.1 实机用认证 headless 浏览器验证，
+  截图见 [docs/assets/deepseek-harness-sidebar.png](docs/assets/deepseek-harness-sidebar.png)。
 
 ## [0.1.0] - 2026-11-02
 

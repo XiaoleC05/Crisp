@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Crisp Quality Gate",
-    "description": "Checks completed assistant answers with the Crisp binary, logs one structured decision, and can request one full rewrite in guard mode."
+    "description": "Checks completed assistant answers with the Crisp binary, logs one structured decision, can request one full rewrite in guard mode, and serves a live left-sidebar status page in the Web GUI."
   }
 }

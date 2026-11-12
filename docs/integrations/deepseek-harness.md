@@ -1,17 +1,20 @@
 # Crisp × DeepSeek Harness (Cordis host plugin)
 
-Status: **installable Host-only bundle, verified against the installed DeepSeek
-Harness 0.2.1-rc.5 (Windows, Node.js v22.19.0) in an isolated scratch profile.**
-The bundle lives at [integrations/dsh-plugin-crisp/](../../integrations/dsh-plugin-crisp/)
-and is registered by its own `cordis.patch.yml`.
+Status: **installable Host + Web bundle, verified on the installed DeepSeek
+Harness 0.2.2-rc.1 (Windows, Node.js v22.19.0): real `desktop` profile, real
+DeepSeek-V4.1-Flash HTTP Critic with thinking disabled, and the Web left-sidebar
+status page in a headless browser.** The bundle lives at
+[integrations/dsh-plugin-crisp/](../../integrations/dsh-plugin-crisp/) and is
+registered by its own `cordis.patch.yml`; the Web half is declared by
+`dsh.client` in the same `package.json`.
 
 This page records exactly what was executed end to end, what was verified only
 by unit tests, and what remains unverified. The guard flow is reproducible from
 the repository: [scripts/e2e-dsh.ps1](../../scripts/e2e-dsh.ps1) runs the real
 `dsh` launcher headless against committed local protocol mocks
 ([test/e2e/mockmessages](../../test/e2e/mockmessages/main.go) and
-[test/e2e/mockcritic](../../test/e2e/mockcritic/main.go)). Nothing here was
-measured against a real model provider or a real Critic service.
+[test/e2e/mockcritic](../../test/e2e/mockcritic/main.go)). Real-provider and
+live-Web measurements are recorded in sections 6.3 and 6.5.
 
 ---
 
@@ -34,6 +37,12 @@ a DeepSeek Harness Host plugin.
   (default) or the **Harness's own signed-in model** through `ctx.llm`
   (`critic: harness`, e.g. DeepSeek-V4.1-Flash with thinking off). See
   [Critic modes](#critic-modes).
+- The bundle also contributes a **Web UI left-sidebar entry** ("质量门禁" /
+  "Quality gate") that opens a standalone status page: current mode, critic
+  model/capabilities, today's counters, average critic latency, and the latest
+  20 checks read from the local JSONL log. The Host half serves that page's data
+  as `GET /crisp/status`; no answer text or credentials are exposed. See
+  [Left-sidebar status page](#left-sidebar-status-page).
 
 Every failure (spawn error, timeout, non-zero exit, bad JSON) is a fail-open
 pass, mirroring the Go core.
@@ -105,19 +114,29 @@ Why this shape:
   bundle independent of the Harness schemastery version. A bad value falls back
   to a safe default and is reported in the activation record's `warnings`.
 
+The **Web half** (`client.js`) is a separate plain browser bundle declared with
+`"dsh.client": { "platform": "web", "immediately": true }` and no Harness
+client-package imports. It registers a `sidebar.panellist` entry and a keyed
+`main` page, styles itself with `--dsw-alias-*` tokens only, and fetches
+`/crisp/status` from the Host half. The Host half registers that exact route on
+the optional `webServer` service when present; profiles without the Web UI keep
+running the gate unchanged.
+
 ### Files
 
 | File | Role |
 |---|---|
-| `integrations/dsh-plugin-crisp/package.json` | private ESM bundle manifest, `dsh.bundle.patch`, exports for index/locale/icon |
+| `integrations/dsh-plugin-crisp/package.json` | private ESM bundle manifest: `dsh.bundle.patch`, `dsh.client` (Web half), exports for index/client/locale/icon |
 | `integrations/dsh-plugin-crisp/cordis.patch.yml` | inserts the single `crisp-quality-gate` row and its example config |
-| `integrations/dsh-plugin-crisp/index.js` | Host plugin: `apply(ctx, config)` registers `llm/stream`, `session/event`, `session/disposed` |
+| `integrations/dsh-plugin-crisp/index.js` | Host plugin: `apply(ctx, config)` registers `llm/stream`, `session/event`, `session/disposed`, and the status route |
 | `integrations/dsh-plugin-crisp/lib/gate.js` | chunk accumulator, check orchestration, guard followup, structured records |
 | `integrations/dsh-plugin-crisp/lib/crisp.js` | bounded `crisp check-text` child process, decision parsing, fail-open |
 | `integrations/dsh-plugin-crisp/lib/config.js` | defensive config, child-env allowlist, default binary resolution |
 | `integrations/dsh-plugin-crisp/lib/log.js` | one JSON line per event to `logFile` or stderr |
+| `integrations/dsh-plugin-crisp/lib/status.js` | read-only `GET /crisp/status` snapshot: sanitized config, counters, latest checks |
+| `integrations/dsh-plugin-crisp/client.js` | Web half: left-sidebar entry + standalone status page (React from the module loader) |
 | `integrations/dsh-plugin-crisp/locale/{en,zh}.json`, `icon.svg` | Plugin Manager display metadata and original icon |
-| `integrations/dsh-plugin-crisp/test/` | 57 hermetic `node:test` tests (fake ctx, fake runner, fake child) |
+| `integrations/dsh-plugin-crisp/test/` | 87 hermetic `node:test` tests (fake ctx, runner, child and status log fixtures) |
 
 The end-to-end reproduction harness is committed too:
 `scripts/e2e-dsh.ps1` (PowerShell 7) drives the real launcher and asserts the
@@ -413,6 +432,33 @@ the fields you keep):
 In harness mode a `crisp_quality_check` record additionally carries
 `"critic":"harness"`; all other fields are the same as the HTTP mode.
 
+### Left-sidebar status page
+
+The Web half adds a **质量门禁 / Quality gate** entry to the left sidebar. It
+opens a standalone main-area page (a keyed `main` panel), not a second
+conversation surface; **返回对话 / Back to chat** returns to the current
+conversation.
+
+![Crisp quality gate page in the DeepSeek Harness left sidebar](../assets/deepseek-harness-sidebar.png)
+
+- **Open it**: install/update the bundle, then refresh the Web page once so the
+  browser module graph loads `client.js`; the shield entry appears under the
+  sidebar's global panels. The plugin row itself reloads with the profile.
+- **Data**: `GET /crisp/status` returns one JSON snapshot —
+  sanitized config (`mode`, critic backend/model, `thinkingOff`, bounds, log
+  path, warnings), aggregates (all-time and today: pass/block/fail-open, critic
+  calls, average critic latency, guard followups/errors) and the latest 20
+  `crisp_quality_check` records. The page refreshes every 5 s while visible and
+  has a manual refresh button.
+- **Security**: the route is served only by the loopback Web server, is gated by
+  the composition's `connection.requestRejection` browser fence (Host/Origin
+  and session cookie), returns `Cache-Control: no-store`, and never includes
+  answer text, user content, or the API key — only the critic base-URL host and
+  model id.
+- **Bounds**: the route reads a bounded 1.5 MB tail of `logFile`; with
+  `logFile: false` the page shows an empty state. The page is a read-only view;
+  it never changes configuration.
+
 ### Log records
 
 One JSON object per line, plugin tag `crisp-quality-gate`:
@@ -431,7 +477,9 @@ One JSON object per line, plugin tag `crisp-quality-gate`:
 - `crisp_guard_error` / `crisp_quality_error` — contained failures; never thrown
   into the agent run.
 
-No record contains answer text, user content, or credentials.
+No record contains answer text, user content, or credentials. The Web status
+page reads this same file (bounded tail) and therefore shows exactly the records
+above, never reconstructed answer text.
 
 ### Data processing boundary
 
@@ -441,6 +489,11 @@ rule evidence) to the configured OpenAI-compatible service — the same boundary
 as the Codex integration in the project README. The child does **not** receive
 the Harness process environment wholesale; only the allowlisted / passthrough
 variables are forwarded.
+
+The Web status page adds a local-only read boundary: its Host route reads the
+JSONL log and a sanitized configuration summary, and the browser page only
+fetches that same-origin route. Neither side reads the raw answer text from the
+session log.
 
 ---
 
@@ -511,13 +564,14 @@ cd integrations/dsh-plugin-crisp
 node --test "test/*.test.js"
 ```
 
-Result: **57/57 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
+Result: **87/87 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
 child-env filtering; decision parsing; spawn success/error/exit/kill; all
 fail-open paths; stream pass-through identity; visible-text accumulation
 (reasoning excluded, block-end fallback); tool-call and non-stop skips;
 minRunes; agent-request detection; guard followup once per turn, rewrite-turn
 suppression, no-turn/agent-unavailable/refusing-followup paths;
-manifest/patch/locale/icon contract; rewrite instruction equality with
+manifest/patch/locale/icon contract; Web client manifest, client registrations
+and status payload/key non-disclosure; rewrite instruction equality with
 `internal/policy/decision.go`.
 
 ### 6.3 Additional one-off measurements during integration development
@@ -546,9 +600,24 @@ one-off measurements:
   `critic_tokens:55`) and the final stdout was the rewritten answer. The mock
   received exactly 2 conversation calls + 2 critic calls with no recursive
   check. This verifies the harness-critic wiring and the "no `sessionId` on the
-  critic call" recursion guard against the real Harness LLM service; it does
-  **not** verify the signed-in `deepseek-account` route, which needs the live
-  profile change and a restart (see section 6.5).
+  critic call" recursion guard against the real Harness LLM service. It does
+  **not** verify the signed-in `deepseek-account` route by itself; that route
+  was verified once in the live desktop profile (see the next bullets).
+- **Real HTTP Critic against the official DeepSeek API.** With the documented
+  `QUALITY_GATE_BASE_URL=https://api.deepseek.com/v1`,
+  `QUALITY_GATE_MODEL=deepseek-flash` and
+  `QUALITY_GATE_EXTRA_BODY_JSON='{"thinking":{"type":"disabled"}}'`, the real
+  `crisp.exe check-text` produced `decision:block` / `semantic_duplicate`
+  on the committed duplicate-conclusion sample (1.4 s, 1167 tokens) and
+  `decision:pass` / `critic_pass` on the good long sample (0.6 s, 1272
+  tokens), both `fail_open:false`. Thinking was disabled at the provider.
+- **Live desktop profile.** In guard mode the installed profile logged
+  `crisp_quality_check` records with `critic_called:true` and
+  `fail_open:false`. A live harness-critic review on the signed-in
+  `deepseek-account` route was also observed once (`critic_pass`,
+  `critic_latency_ms:865`, `critic_tokens:1794`); the active desktop config
+  now uses the HTTP critic above.
+- **Web left-sidebar page.** See section 6.5.
 
 ### 6.4 Guard flow measured numbers
 
@@ -573,15 +642,42 @@ original manual run that motivated it and from the harness run:
    asserts the same facts through the gate and mock logs rather than decoding
    the session container).
 
-### 6.5 What remains unverified
+### 6.5 Web left-sidebar page — PASS (live)
+
+Measured on the installed `desktop` profile (Harness 0.2.2-rc.1) on 2026-11-13:
+
+1. After the bundle grew its `dsh.client` Web half and the profile row
+   reloaded, the Web page's boot payload contained
+   `@local/crisp-quality-gate/client.js`, and `GET /crisp/status` answered
+   `200` with the sanitized snapshot used by the page.
+2. An authenticated headless browser session (temporary Edge profile, browser
+   session cookie minted from this harness's `client-connection/browser-session`
+   credential) loaded the page:
+   - the left sidebar contained a button with `aria-label="质量门禁"`;
+   - clicking it opened the page shown in
+     [Left-sidebar status page](#left-sidebar-status-page): `GUARD`,
+     `deepseek-flash`, `HTTP · api.deepseek.com · 思考已关闭`, today's
+     counters, average latency, the latest checks, the log path, and a working
+     **返回对话** button;
+   - there were **no console errors**.
+3. Screenshot: [docs/assets/deepseek-harness-sidebar.png](../assets/deepseek-harness-sidebar.png),
+   captured from that session.
+
+Not covered here: a reader who keeps the page open across a plugin update (Web
+client bundles load on the next page render, so a refresh is required) and guard
+rewrites triggered from a live desktop conversation (no material block occurred
+while observing).
+
+### 6.6 What remains unverified
 
 | Claim | Status |
 |---|---|
 | `plugin_manager install_bundle` path | **Not executed** (tool unavailable in the verification environment; user profile untouched). Documented from shipped docs. |
 | Full rewrite on the user's real profile / long-lived Web/TUI surface | **Not executed.** Guard followup was verified through the headless runner by the committed harness; the session-event and followup APIs used are the same, but no GUI session was driven. |
-| Rendering of the plugin's title/description/icon in Plugin Manager | **Not executed** (no browser control / no plugin-manager tool). Locale JSON, exports, and SVG validity are covered by contract tests only. |
-| Real DeepSeek provider and real Critic service | **Not used.** The E2E used local protocol mocks; no credentials or network calls were involved. |
-| Live `critic: harness` call on the signed-in `deepseek-account` route | **Not verified in this session.** The harness-critic path is covered by hermetic unit tests with a fake `ctx.llm`; a live call needs the new config applied to the running Harness and a restart (the Lead applies it and asks the user to restart). The HTTP critic remains the default until then. |
+| Rendering of the plugin's title/description/icon in Plugin Manager | **Not executed** (no plugin-manager tool). Locale JSON, exports, and SVG validity are covered by contract tests only. |
+| Full rewrite triggered from a live desktop conversation | **Not executed.** The guard followup ran in the headless E2E; the installed profile has not seen a material block yet, so no live rewrite turn was observed. |
+| Left-sidebar page across a plugin update without a page refresh | **Not supported/verified.** Web client bundles are part of the page's module graph; reload the page after updating the bundle. |
+| A live `critic: harness` call on the signed-in `deepseek-account` route | **Verified once** in the live desktop profile(`critic_pass`, 865 ms, 1794 tokens, `fail_open:false`); the active desktop config now uses the external HTTP critic instead. The harness path remains covered by hermetic unit tests and the scratch headless E2E. |
 | `@deepseek-ai/dsh-llm-replay` headless replay | **Blocked:** the package is not shipped in this installation's `app.asar` (checked by listing; only the source-checkout catalog mentions it). The committed Messages mock is used instead. |
 | Other DSH versions, non-Windows platforms, paths with spaces | **Not verified.** The harness derives the plugin path from the repository and needs an installed `dsh`; it was measured only against 0.2.1-rc.5 on Windows. |
 | Which detector branch ran in the E2E (lazy marker import vs `purpose`/`sessionId` fallback) | **Not observed.** Both produce the same decision; titles/compaction are filtered by `purpose` regardless. |
@@ -622,8 +718,15 @@ original manual run that motivated it and from the harness run:
    and unknown decisions are all logged as `fail_open: true` passes.
 8. **Windows.** The child is spawned with `windowsHide: true`; a timeout calls
    `child.kill()` on the direct child (Crisp itself spawns no children).
-9. **Restart.** A profile that is already running does not pick up a newly
-   installed bundle until restart/HMR, same as any Cordis plugin change.
+9. **Restart and page refresh.** A profile that is already running picks up a
+   changed plugin row through configuration HMR, but a changed **Web client**
+   bundle belongs to the page's module graph: reload the page before expecting
+   the sidebar entry or its updates. Installing a new bundle may require the
+   usual restart.
+10. **Status page is local and bounded.** It exists only where the composition
+    mounts `webServer`; it reads the tail of `logFile`, so records older than
+    the last 1.5 MB are not shown, and it never changes configuration or reads
+    answer text.
 
 ---
 
@@ -638,6 +741,9 @@ cd D:\05_Code\Crisp\integrations\dsh-plugin-crisp; node --test "test/*.test.js"
 
 # binary contract used by the plugin
 'This is a normal complete answer.' | D:\05_Code\Crisp\bin\crisp.exe check-text
+
+# Web status page: left sidebar -> 质量门禁, or an authenticated GET:
+#   GET http://127.0.0.1:<web-port>/crisp/status  (browser session cookie)
 
 # inspect the most recent harness run (summary + gate/mock logs)
 $run = Get-ChildItem .tmp\e2e\dsh -Directory -Filter 'run-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
