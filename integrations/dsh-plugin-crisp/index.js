@@ -96,24 +96,75 @@ function getWebServer(ctx, deps) {
  * @param {object} deps injectable seams
  */
 function registerStatusRoute(ctx, config, deps) {
-  const webServer = getWebServer(ctx, deps);
-  if (webServer === undefined || webServer === null || typeof webServer.register !== "function") {
+  /**
+   * Register the route on one concrete webServer service. Returns a disposer,
+   * or undefined when the service is absent and the plugin should stay quiet.
+   *
+   * @param {object|undefined} webServer the composition's web server service
+   * @returns {(() => void)|undefined} route disposer
+   */
+  const registerOn = (webServer) => {
+    if (webServer === undefined || webServer === null || typeof webServer.register !== "function") {
+      return undefined;
+    }
+    try {
+      const service = createStatusService(ctx, config, deps);
+      const handler = createStatusHandler(service, ctx);
+      const dispose = webServer.register({ kind: "exact", path: service.route, handler });
+      return () => {
+        try {
+          dispose?.();
+        } catch {
+          // The web server may already be tearing down.
+        }
+      };
+    } catch (error) {
+      try {
+        ctx.logger?.warn?.(error);
+      } catch {
+        // Diagnostics are best-effort; the gate still mounts.
+      }
+      return undefined;
+    }
+  };
+
+  // A test/embedding seam can pin the service. Otherwise use Cordis optional
+  // service injection: the Web server may not exist yet when this row applies
+  // (or may be replaced later), so a one-shot ctx.get() at activation can
+  // silently leave the route unregistered and make the sidebar page show 404.
+  if (typeof deps.getWebServer === "function") {
+    const webServer = getWebServer(ctx, deps);
+    const dispose = registerOn(webServer);
+    if (typeof dispose === "function" && typeof ctx.effect === "function") {
+      ctx.effect(() => dispose, "crisp-quality-gate.status-route()");
+    } else if (typeof dispose === "function") {
+      // No effect scope (test doubles): leave the route registered.
+    }
     return;
   }
-  try {
-    const service = createStatusService(ctx, config, deps);
-    const handler = createStatusHandler(service, ctx);
-    const register = () => webServer.register({ kind: "exact", path: service.route, handler });
-    if (typeof ctx.effect === "function") {
-      ctx.effect(register, "crisp-quality-gate.status-route()");
-    } else {
-      register();
-    }
-  } catch (error) {
+
+  if (typeof ctx.inject === "function") {
     try {
-      ctx.logger?.warn?.(error);
-    } catch {
-      // Diagnostics are best-effort; the gate still mounts.
+      ctx.inject(["webServer"], (childCtx) => {
+        const webServer = childCtx?.webServer;
+        const dispose = registerOn(webServer);
+        if (typeof dispose === "function" && typeof childCtx?.effect === "function") {
+          childCtx.effect(() => dispose, "crisp-quality-gate.status-route()");
+        }
+      });
+      return;
+    } catch (error) {
+      try {
+        ctx.logger?.warn?.(error);
+      } catch {
+        // Fall through to the one-shot path below.
+      }
     }
+  }
+
+  // Older hosts without ctx.inject: keep the historical one-shot registration.
+  const dispose = registerOn(getWebServer(ctx, deps));
+  if (typeof dispose === "function" && typeof ctx.effect === "function") {
+    ctx.effect(() => dispose, "crisp-quality-gate.status-route()");
   }
 }

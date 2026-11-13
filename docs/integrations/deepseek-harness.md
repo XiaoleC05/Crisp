@@ -150,7 +150,7 @@ running the gate unchanged.
 | `integrations/dsh-plugin-crisp/lib/optimizer.js` | pre-delivery editor prompt + one streaming rewrite through `ctx.llm` (optimize delivery only) |
 | `integrations/dsh-plugin-crisp/client.js` | Web half: left-sidebar entry + standalone status page (React from the module loader) |
 | `integrations/dsh-plugin-crisp/locale/{en,zh}.json`, `icon.svg` | Plugin Manager display metadata and original icon |
-| `integrations/dsh-plugin-crisp/test/` | 109 hermetic `node:test` tests (fake ctx, runner, child, optimizer stream and status log fixtures) |
+| `integrations/dsh-plugin-crisp/test/` | 111 hermetic `node:test` tests (fake ctx, runner, child, optimizer stream and status log fixtures) |
 
 The end-to-end reproduction harness is committed too:
 `scripts/e2e-dsh.ps1` (PowerShell 7) drives the real launcher and asserts the
@@ -525,6 +525,12 @@ conversation.
 - **Bounds**: the route reads a bounded 1.5 MB tail of `logFile`; with
   `logFile: false` the page shows an empty state. The page is a read-only view;
   it never changes configuration.
+- **Route lifetime/ordering**: the route is registered through optional
+  `webServer` service injection, not a one-shot lookup at activation. This
+  matters when the Web server is mounted after the plugin row (or replaced
+  during a profile reload); a one-shot lookup can leave the route unregistered
+  and the page then reports HTTP 404 even though the entry loads. Regression
+  tests cover both the injection path and the older-host fallback.
 
 ### Log records
 
@@ -641,7 +647,7 @@ cd integrations/dsh-plugin-crisp
 node --test "test/*.test.js"
 ```
 
-Result: **109/109 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
+Result: **111/111 pass, 0 fail**. Coverage: config defaults/precedence/clamping;
 child-env filtering; decision parsing; spawn success/error/exit/kill; all
 fail-open paths; stream pass-through identity; visible-text accumulation
 (reasoning excluded, block-end fallback); tool-call and non-stop skips;

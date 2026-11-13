@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复 DSH Web 左侧栏“输出优化”页面偶发 404：状态路由原本只在插件激活时用
+  `ctx.get("webServer")` 做一次性注册；当 Web server 在该行之后才挂载/替换时路由缺失，
+  页面请求 `GET /crisp/status` 得到 404。现改为 Cordis 可选服务注入
+  `ctx.inject(["webServer"], ...)`，并保留老宿主的一次性回退；新增两条回归测试
+  （插件单测 111/111）。
+
 ### Changed
 
 - DSH Web 左侧栏中文名改为 **“输出优化”**，英文名统一为 **Crisp**（页面标题同步）；

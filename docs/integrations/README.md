@@ -136,7 +136,7 @@ go run ./test/docscheck
 | `go run ./test/e2e/hookreplay -crisp bin/crisp.exe` | 12/12 通过（约 611 ms） |
 | `scripts/e2e-codex.ps1` | 8/8 场景通过（run-20261102-215036） |
 | `scripts/e2e-claude.ps1` | 3/3 检查通过（run-20261102-221324） |
-| `integrations/dsh-plugin-crisp` `node --test` | 109/109 通过 |
+| `integrations/dsh-plugin-crisp` `node --test` | 111/111 通过 |
 | `integrations/opencode-crisp` `node --test` | 51/51 通过 |
 
 注意：Codex E2E 在找不到 CLI 时会直接失败（脚本要求 `-CodexPath` 或默认安装路径）；
